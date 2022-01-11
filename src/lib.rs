@@ -1,3 +1,7 @@
+// use core::num;
+// use std::{collections::HashMap, hash::Hash};
+use std::collections::HashMap;
+
 const MIN_MARKER: u16 = 0xFF00;
 
 const SOF3: u16 = 0xFFC3;  // Lossless Huffman Encoding
@@ -23,16 +27,119 @@ struct Header_Parameter {
     Ta: u8,
 }
 
+// struct Huffman_Table {
+//     Tc: u8,
+//     Th: u8,
+//     table: HashMap<>,
+// }
+
 pub fn decode(encoded_image: Vec<u8>) {
     is_jpeg(&encoded_image);
 
     let (P, Y, X, comps) = parse_frame_header(&encoded_image);
 
-    let mut read_index = 12 + comps.len();
+    let mut read_index = 12 + comps.len() * 3;
 
-    let (head_params, Ss, Se, Ah, Al) = parse_scan_header(&encoded_image, read_index);
+    parse_huffman_table_info(&encoded_image, read_index);
 
-    read_index += 2 + 2 + 1 + head_params.len() * 2 + 1 + 1 + 1;
+    // let (head_params, Ss, Se, Ah, Al) = parse_scan_header(&encoded_image, read_index);
+
+    // read_index += 2 + 2 + 1 + head_params.len() * 2 + 1 + 1 + 1;
+}
+
+fn parse_huffman_table_info(encoded_image: &Vec<u8>, mut read_index: usize) {
+    // let huffman_tables: Vec<Huffman_Table> = Vec::new();
+    println!("************* {:?} {:?} {:?}", two_bytes_to_int(&encoded_image[read_index..=read_index + 1]), DHT, read_index);
+    while two_bytes_to_int(&encoded_image[read_index..=read_index + 1]) == DHT {
+        read_index += 2;
+        let Lh = two_bytes_to_int(&encoded_image[read_index..=read_index + 1]);
+        println!("****************************************************************** {}", Lh);
+        read_index += 2;
+        let Tc = encoded_image[read_index] >> 4;
+        let Th = encoded_image[read_index] | 0xF;
+        read_index += 1;
+        let mut vij_index = read_index + 16;
+
+        let mut code_lengths = [[0xFF_u8; 16]; 16];
+        let mut Li: u8;
+        let mut n_codes: usize;
+        println!("***************************************** {:?} {:?} {:?}",read_index, &encoded_image[read_index..=read_index + 1], DHT);
+        // panic!("blarggggg");
+        for count_of_code_length_index in read_index..read_index + 16 {
+            Li = encoded_image[count_of_code_length_index];
+            if Li > 0 {
+                n_codes = 0;
+                for _ in 0..Li {
+                    code_lengths[count_of_code_length_index - read_index][n_codes] = encoded_image[vij_index];
+                    n_codes += 1;
+                    vij_index += 1;
+                }
+            }
+        }
+
+        read_index = vij_index;
+
+        println!("**************************oooooooo****************************{:#?}", code_lengths);
+        panic!("blarggggddddddddddddddddg");
+        let huffman_table = make_ssss_table(code_lengths);
+
+        panic!("blarggggg");
+
+        // huffman_tables.append(Huffman_Table {
+        //     Tc:
+        // })
+    }
+}
+
+fn make_ssss_table(code_lengths: [[u8; 16]; 16]) -> HashMap<u32, u8> {
+    // store the huffman code in the bits of a u32
+    let mut code = 1_u32;  // start with a 1 so there can be leading zeros
+    let mut values_w_n_bits: usize;
+
+    let mut table: HashMap<u32, u8> = HashMap::new();
+    
+    let mut removed: u32;
+
+    for index in 0..16 {
+        if code_lengths[index][0] < 0xFF_u8 {
+            let values: Vec<u8> = code_lengths[index].into_iter().filter(|x| x < &0xFF_u8).collect::<Vec<u8>>();
+            values_w_n_bits = 0;
+            while values_w_n_bits <= values.len() {
+                while (number_of_used_bits(&code) - 1) < index + 1 {
+                    code = code << 0;
+                }
+                if values_w_n_bits > 0 {
+                    loop {
+                        removed = code & 1;
+                        code = code >> 1;
+                        if !(removed == 1 && number_of_used_bits(&code) > 1) {
+                            break;
+                        }
+                    }
+                    code = (code << 1) + 1;
+                    code = code << (index + 1) - (number_of_used_bits(&code) - 1);
+                }
+                if values.len() > values_w_n_bits {
+                    let key = code;
+                    let value = values[values_w_n_bits];
+                    table.insert(key, value);
+                }
+            }
+        }
+    }
+
+    table
+}
+
+fn number_of_used_bits(numb: &u32) -> usize {
+    let mut n = *numb;
+    let mut n_bits = 0;
+    while n > 0 {
+        n = n >> 1;
+        n_bits += 1;
+    }
+
+    n_bits
 }
 
 fn parse_scan_header(encoded_image: &Vec<u8>, read_index: usize) -> (Vec<Header_Parameter>, u8, u8, u8, u8) {
@@ -104,29 +211,39 @@ mod tests {
         encoded_image
     }
 
+    // #[test]
+    // fn parse_scan_header_good() {
+    //     let path = Path::new("/home/chad/rust/jpeg/tests/common/F-18.ljpg");
+    //     let encoded_image = get_file_as_byte_vec(path);
+
+    //     let (head_params, Ss, Se, Ah, Al) = parse_scan_header(&encoded_image, 0x15);
+
+    //     assert_eq!(head_params.len(), 3);
+    //     // assert_eq!(head_params[0].C, 0);
+    //     // assert_eq!(head_params[0].H, 1);
+    //     // assert_eq!(head_params[0].V, 1);
+    //     // assert_eq!(head_params[0].Tq, 0);
+    //     // assert_eq!(head_params[1].C, 1);
+    //     // assert_eq!(head_params[1].H, 1);
+    //     // assert_eq!(head_params[1].V, 1);
+    //     // assert_eq!(head_params[1].Tq, 0);
+    //     // assert_eq!(head_params[2].C, 2);
+    //     // assert_eq!(head_params[2].H, 1);
+    //     // assert_eq!(head_params[2].V, 1);
+    //     // assert_eq!(head_params[2].Tq, 0);
+    //     // assert_eq!(P, 0x08);
+    //     // assert_eq!(Y, 0x00F0);
+    //     // assert_eq!(X, 0x0140);
+    // }
+
     #[test]
-    fn parse_scan_header_good() {
+    fn make_ssss_table_good() {
         let path = Path::new("/home/chad/rust/jpeg/tests/common/F-18.ljpg");
         let encoded_image = get_file_as_byte_vec(path);
 
-        let (head_params, Ss, Se, Ah, Al) = parse_scan_header(&encoded_image, 0x15);
+        decode(encoded_image);
 
-        assert_eq!(head_params.len(), 3);
-        // assert_eq!(head_params[0].C, 0);
-        // assert_eq!(head_params[0].H, 1);
-        // assert_eq!(head_params[0].V, 1);
-        // assert_eq!(head_params[0].Tq, 0);
-        // assert_eq!(head_params[1].C, 1);
-        // assert_eq!(head_params[1].H, 1);
-        // assert_eq!(head_params[1].V, 1);
-        // assert_eq!(head_params[1].Tq, 0);
-        // assert_eq!(head_params[2].C, 2);
-        // assert_eq!(head_params[2].H, 1);
-        // assert_eq!(head_params[2].V, 1);
-        // assert_eq!(head_params[2].Tq, 0);
-        // assert_eq!(P, 0x08);
-        // assert_eq!(Y, 0x00F0);
-        // assert_eq!(X, 0x0140);
+        panic!("blarg")
     }
 
     #[test]
@@ -152,6 +269,37 @@ mod tests {
         assert_eq!(comps[2].H, 1);
         assert_eq!(comps[2].V, 1);
         assert_eq!(comps[2].Tq, 0);
+    }
+
+    #[test]
+    fn number_of_used_bits_32() {
+        let n = 0xFFFFFFFF / 2 + 1;
+        assert_eq!(number_of_used_bits(&n), 32);
+    }
+
+    #[test]
+    fn number_of_used_bits_4() {
+        let n = 0xF;
+        assert_eq!(number_of_used_bits(&n), 4);
+    }
+
+    #[test]
+    fn number_of_used_bits_2() {
+        let n = 3;
+        assert_eq!(number_of_used_bits(&n), 2);
+        assert_eq!(number_of_used_bits(&n), 2);
+    }
+
+    #[test]
+    fn number_of_used_bits_1() {
+        let n = 1;
+        assert_eq!(number_of_used_bits(&n), 1);
+    }
+
+    #[test]
+    fn number_of_used_bits_0() {
+        let n = 0;
+        assert_eq!(number_of_used_bits(&n), 0);
     }
 
     #[test]
