@@ -14,6 +14,17 @@ const DHT: u16 = 0xFFC4;  // Define Huffman table(s)
 
 const EOI: u16 = 0xFFD9;  // End of image
 
+struct Context {
+    a: u8,
+    b: u8,
+    c: u8,
+    ix: u8,
+}
+
+struct Predictor {
+    a: u8
+}
+
 struct Component {
     C: u8,
     H: u8,
@@ -52,11 +63,7 @@ pub fn decode(encoded_image: Vec<u8>) {
     is_jpeg(&encoded_image);
     let mut read_index: usize = 2;
     let mut marker: u16;
-
-    // let mut P: u8;
-    // let mut Y: u16;
-    // let mut X: u16;
-    // let mut components: Vec<Component>;
+    
     let mut frame_header: FrameHeader;
 
     let mut ssss_tables: Vec<SSSSTable> = Vec::with_capacity(2);
@@ -64,32 +71,27 @@ pub fn decode(encoded_image: Vec<u8>) {
         marker = bytes_to_int_two(&encoded_image[read_index..read_index+2]);
         match marker {
             SOF3 => {
-                // (P, Y, X, components, read_index) = parse_frame_header(&encoded_image, read_index); 
                 let header_info = parse_frame_header(&encoded_image, read_index); 
 
                 frame_header = header_info.0;
                 read_index = header_info.1;
-
-                // P = header_info.0;
-                // Y = header_info.1;
-                // X = header_info.2;
-                // components = header_info.3;
-                // read_index = header_info.4;
             },
             DHT => {
-                // (ssss_tables, read_index) = get_huffman_info(&encoded_image, read_index); 
                 let huffman_info = get_huffman_info(&encoded_image, read_index);
                 ssss_tables.push(huffman_info.0);
                 read_index = huffman_info.1;
             },
-            SOS => {},
+            SOS => {
+                let (scan_header, read_index) = parse_scan_header(&encoded_image, read_index);
+
+            },
             x if x > MIN_MARKER => panic!("Not implimented marker!"),
             _ => { read_index += 1; },
         }
     }
 }
 
-fn get_huffman_info(encoded_image: &Vec<u8>, mut read_index: usize) -> (SSSSTable, usize) {
+fn get_huffman_info(encoded_image: &Vec<u8>, read_index: usize) -> (SSSSTable, usize) {
     let (Tc, Th, code_lengths, read_index) = parse_huffman_info(&encoded_image, read_index);
 
     let table = make_ssss_table(code_lengths);
@@ -180,7 +182,7 @@ fn number_of_used_bits(numb: &u32) -> usize {
     n_bits
 }
 
-fn parse_scan_header(encoded_image: &Vec<u8>, mut read_index: usize) -> ScanHeader {
+fn parse_scan_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (ScanHeader, usize) {
     read_index += 2;
     let Ls = bytes_to_int_two(&encoded_image[read_index..read_index + 2]);
     read_index += 2;
@@ -203,15 +205,14 @@ fn parse_scan_header(encoded_image: &Vec<u8>, mut read_index: usize) -> ScanHead
     let Al = encoded_image[read_index] & 0xF;
     read_index += 1;
 
-    ScanHeader {
+    (ScanHeader {
         head_params,
         Ss,
         Se,
         Ah,
         Al,
-    }
-
-    // (head_params, Ss, Se, Ah, Al)
+    },
+    read_index)
 }
 
 fn parse_frame_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (FrameHeader, usize) {
@@ -259,6 +260,50 @@ fn bytes_to_int_two(bytes: &[u8]) -> u16 {
     (bytes[0] as u16) << 8 | bytes[1] as u16
 }
 
+fn decode_image(encoded_image: &Vec<u8>, frame_header: FrameHeader, scan_header: ScanHeader) {
+    let width = frame_header.X as usize;
+    let height = frame_header.Y as usize;
+    // let mut context: [u8; 5] = [0, 0, 0, 0, 0];
+
+    let number_of_pixels = (width * height) as usize;
+    let mut x = 0;
+    let mut y = 0;
+    let write_index = 0_usize;
+
+    let mut img: Vec<Vec<Vec<u8>>>= vec!(vec!(vec!(0; height); width); frame_header.components.len());
+
+    while write_index < number_of_pixels {
+        for component in 0..frame_header.components.len() {
+            x = write_index % width;
+            y = write_index / width;
+            get_context(component, &x, &y, &scan_header.Al, &frame_header.P, &img);
+        }
+    }
+}
+
+fn get_context(component: usize, x: &usize, y: &usize, point_tranform: &u8, P: &u8, img: &Vec<Vec<Vec<u8>>>) -> Context {
+    let mut a: u8 = 0;
+    let mut b: u8 = 0;
+    let mut c: u8 = 0;
+    let mut ix = img[component][*x][*y];
+
+    if *y > 0 {
+        if *x > 0 {
+            a = img[component][*x - 1][*y];
+            c = img[component][x - 1][y - 1];
+        }
+        b = img[component][*x][y - 1];
+    } else {
+        if *x > 0 {
+            a = img[component][x - 1][*y];
+        } else {
+            a = 1 << (P - point_tranform - 1);
+        }
+    }
+
+    Context {a, b, c, ix}
+}
+
 #[cfg(test)]
 mod tests {
     use std::env;
@@ -278,6 +323,94 @@ mod tests {
     }
 
     #[test]
+    fn get_context_top_left() {
+        let mut img = vec!(vec!(vec!(0_u8; 3); 4); 2);
+        img[0][0] = Vec::from([1, 2, 3]);
+        img[0][1] = Vec::from([4, 5, 6]);
+        img[0][2] = Vec::from([7, 8, 9]);
+        img[0][3] = Vec::from([10, 11, 12]);
+
+        let component: usize = 0;
+        let x: usize = 0;
+        let y: usize = 0;
+        let point_transform: u8 = 2;
+        let P: u8 = 8;
+
+        let context = get_context(component, &x, &y, &point_transform, &P, &img);
+
+        assert_eq!(context.a, 1 << (P - point_transform - 1));
+        assert_eq!(context.b, 0);
+        assert_eq!(context.c, 0);
+        assert_eq!(context.ix, img[component][x][y]);
+    }
+
+    #[test]
+    fn get_context_top_middle() {
+        let mut img = vec!(vec!(vec!(0_u8; 3); 4); 2);
+        img[0][0] = Vec::from([1, 2, 3]);
+        img[0][1] = Vec::from([4, 5, 6]);
+        img[0][2] = Vec::from([7, 8, 9]);
+        img[0][3] = Vec::from([10, 11, 12]);
+
+        let component: usize = 0;
+        let x: usize = 1;
+        let y: usize = 0;
+        let point_transform: u8 = 2;
+        let P: u8 = 8;
+
+        let context = get_context(component, &x, &y, &point_transform, &P, &img);
+
+        assert_eq!(context.a, img[component][x - 1][y]);
+        assert_eq!(context.b, 0);
+        assert_eq!(context.c, 0);
+        assert_eq!(context.ix, img[component][x][y]);
+    }
+
+    #[test]
+    fn get_context_middle_left() {
+        let mut img = vec!(vec!(vec!(0_u8; 3); 4); 2);
+        img[0][0] = Vec::from([1, 2, 3]);
+        img[0][1] = Vec::from([4, 5, 6]);
+        img[0][2] = Vec::from([7, 8, 9]);
+        img[0][3] = Vec::from([10, 11, 12]);
+
+        let component: usize = 0;
+        let x: usize = 0;
+        let y: usize = 1;
+        let point_transform: u8 = 2;
+        let P: u8 = 8;
+
+        let context = get_context(component, &x, &y, &point_transform, &P, &img);
+
+        assert_eq!(context.a, 0);
+        assert_eq!(context.b, img[component][x][y - 1]);
+        assert_eq!(context.c, 0);
+        assert_eq!(context.ix, img[component][x][y]);
+    }
+
+    #[test]
+    fn get_context_middle_middle() {
+        let mut img = vec!(vec!(vec!(0_u8; 3); 4); 2);
+        img[0][0] = Vec::from([1, 2, 3]);
+        img[0][1] = Vec::from([4, 5, 6]);
+        img[0][2] = Vec::from([7, 8, 9]);
+        img[0][3] = Vec::from([10, 11, 12]);
+
+        let component: usize = 0;
+        let x: usize = 1;
+        let y: usize = 1;
+        let point_transform: u8 = 2;
+        let P: u8 = 8;
+
+        let context = get_context(component, &x, &y, &point_transform, &P, &img);
+
+        assert_eq!(context.a, img[component][x - 1][y]);
+        assert_eq!(context.b, img[component][x][y - 1]);
+        assert_eq!(context.c, img[component][x - 1][y - 1]);
+        assert_eq!(context.ix, img[component][x][y]);
+    }
+
+    #[test]
     fn parse_scan_header_good() {
         let mut path = env::current_dir().unwrap();
         path.push("tests");
@@ -286,7 +419,7 @@ mod tests {
         let path = path.as_path();
         let encoded_image = get_file_as_byte_vec(path);
 
-        let scan_header = parse_scan_header(&encoded_image, 0x70);
+        let (scan_header, read_index) = parse_scan_header(&encoded_image, 0x70);
 
         assert_eq!(scan_header.head_params.len(), 3);
         assert_eq!(scan_header.head_params[0].Cs, 0);
