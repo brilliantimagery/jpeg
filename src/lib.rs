@@ -21,6 +21,21 @@ struct Component {
     Tq: u8,
 }
 
+struct FrameHeader {
+    P: u8,
+    Y: u16,
+    X: u16,
+    components: Vec<Component>,
+}
+
+struct ScanHeader {
+    head_params: Vec<HeaderParameter>,
+    Ss: u8,
+    Se: u8,
+    Ah: u8,
+    Al: u8,
+}
+
 struct HeaderParameter {
     Cs: u8,
     Td: u8,
@@ -38,23 +53,28 @@ pub fn decode(encoded_image: Vec<u8>) {
     let mut read_index: usize = 2;
     let mut marker: u16;
 
-    let mut P: u8;
-    let mut Y: u16;
-    let mut X: u16;
-    let mut components: Vec<Component>;
+    // let mut P: u8;
+    // let mut Y: u16;
+    // let mut X: u16;
+    // let mut components: Vec<Component>;
+    let mut frame_header: FrameHeader;
 
     let mut ssss_tables: Vec<SSSSTable> = Vec::with_capacity(2);
     while read_index < encoded_image.len() {
-        marker = two_bytes_to_int(&encoded_image[read_index..read_index+2]);
+        marker = bytes_to_int_two(&encoded_image[read_index..read_index+2]);
         match marker {
             SOF3 => {
                 // (P, Y, X, components, read_index) = parse_frame_header(&encoded_image, read_index); 
                 let header_info = parse_frame_header(&encoded_image, read_index); 
-                P = header_info.0;
-                Y = header_info.1;
-                X = header_info.2;
-                components = header_info.3;
-                read_index = header_info.4;
+
+                frame_header = header_info.0;
+                read_index = header_info.1;
+
+                // P = header_info.0;
+                // Y = header_info.1;
+                // X = header_info.2;
+                // components = header_info.3;
+                // read_index = header_info.4;
             },
             DHT => {
                 // (ssss_tables, read_index) = get_huffman_info(&encoded_image, read_index); 
@@ -83,7 +103,7 @@ fn get_huffman_info(encoded_image: &Vec<u8>, mut read_index: usize) -> (SSSSTabl
 
 fn parse_huffman_info(encoded_image: &Vec<u8>, mut read_index: usize) -> (u8, u8, [[u8; 16]; 16], usize) {
     read_index += 2;
-    let Lh = two_bytes_to_int(&encoded_image[read_index..=read_index + 1]);
+    let Lh = bytes_to_int_two(&encoded_image[read_index..=read_index + 1]);
     read_index += 2;
     let Tc = encoded_image[read_index] >> 4;
     let Th = encoded_image[read_index] | 0xF;
@@ -160,9 +180,9 @@ fn number_of_used_bits(numb: &u32) -> usize {
     n_bits
 }
 
-fn parse_scan_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (Vec<HeaderParameter>, u8, u8, u8, u8) {
+fn parse_scan_header(encoded_image: &Vec<u8>, mut read_index: usize) -> ScanHeader {
     read_index += 2;
-    let Ls = two_bytes_to_int(&encoded_image[read_index..read_index + 2]);
+    let Ls = bytes_to_int_two(&encoded_image[read_index..read_index + 2]);
     read_index += 2;
     let Ns = encoded_image[read_index] as usize;
     read_index += 1;
@@ -183,18 +203,26 @@ fn parse_scan_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (Vec<Hea
     let Al = encoded_image[read_index] & 0xF;
     read_index += 1;
 
-    (head_params, Ss, Se, Ah, Al)
+    ScanHeader {
+        head_params,
+        Ss,
+        Se,
+        Ah,
+        Al,
+    }
+
+    // (head_params, Ss, Se, Ah, Al)
 }
 
-fn parse_frame_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (u8, u16, u16, Vec<Component>, usize) {
+fn parse_frame_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (FrameHeader, usize) {
     read_index += 2;
-    let Lf: u16 = two_bytes_to_int(&encoded_image[read_index..read_index + 2]);
+    let Lf: u16 = bytes_to_int_two(&encoded_image[read_index..read_index + 2]);
     read_index += 2;
     let P: u8 = encoded_image[read_index];
     read_index += 1;
-    let Y: u16 = two_bytes_to_int(&encoded_image[read_index..read_index + 2]);
+    let Y: u16 = bytes_to_int_two(&encoded_image[read_index..read_index + 2]);
     read_index += 2;
-    let X: u16 = two_bytes_to_int(&encoded_image[read_index..read_index + 2]);
+    let X: u16 = bytes_to_int_two(&encoded_image[read_index..read_index + 2]);
     read_index += 2;
     let Nf: usize = encoded_image[read_index] as usize;
     read_index += 1;
@@ -209,26 +237,34 @@ fn parse_frame_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (u8, u1
         read_index += 3
     }
 
-    (P, Y, X, components, read_index)
+    (FrameHeader {
+        P,
+        Y,
+        X,
+        components,
+    },
+    read_index)
+    // (P, Y, X, components, read_index)
 }
 
 fn is_jpeg(encoded_image: &Vec<u8>) -> bool {
-    if two_bytes_to_int(&encoded_image[..2]) != SOI {
+    if bytes_to_int_two(&encoded_image[..2]) != SOI {
         panic!("This doesn't seem to be a JPEG.");
     }
 
     true
 }
 
-fn two_bytes_to_int(bytes: &[u8]) -> u16 {
+fn bytes_to_int_two(bytes: &[u8]) -> u16 {
     (bytes[0] as u16) << 8 | bytes[1] as u16
 }
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::fs::File;
     use std::io::Read;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::*;
 
@@ -243,32 +279,38 @@ mod tests {
 
     #[test]
     fn parse_scan_header_good() {
-        let path = Path::new("/home/chad/rust/jpeg/tests/common/F-18.ljpg");
+        let mut path = env::current_dir().unwrap();
+        path.push("tests");
+        path.push("common");
+        path.push("F-18.ljpg");
+        let path = path.as_path();
         let encoded_image = get_file_as_byte_vec(path);
 
-        let (head_params, Ss, Se, Ah, Al) = parse_scan_header(&encoded_image, 0x15);
+        let scan_header = parse_scan_header(&encoded_image, 0x70);
 
-        assert_eq!(head_params.len(), 3);
-        // assert_eq!(head_params[0].C, 0);
-        // assert_eq!(head_params[0].H, 1);
-        // assert_eq!(head_params[0].V, 1);
-        // assert_eq!(head_params[0].Tq, 0);
-        // assert_eq!(head_params[1].C, 1);
-        // assert_eq!(head_params[1].H, 1);
-        // assert_eq!(head_params[1].V, 1);
-        // assert_eq!(head_params[1].Tq, 0);
-        // assert_eq!(head_params[2].C, 2);
-        // assert_eq!(head_params[2].H, 1);
-        // assert_eq!(head_params[2].V, 1);
-        // assert_eq!(head_params[2].Tq, 0);
-        // assert_eq!(P, 0x08);
-        // assert_eq!(Y, 0x00F0);
-        // assert_eq!(X, 0x0140);
+        assert_eq!(scan_header.head_params.len(), 3);
+        assert_eq!(scan_header.head_params[0].Cs, 0);
+        assert_eq!(scan_header.head_params[0].Td, 0);
+        assert_eq!(scan_header.head_params[0].Ta, 0);
+        assert_eq!(scan_header.head_params[1].Cs, 1);
+        assert_eq!(scan_header.head_params[1].Td, 1);
+        assert_eq!(scan_header.head_params[1].Ta, 0);
+        assert_eq!(scan_header.head_params[2].Cs, 2);
+        assert_eq!(scan_header.head_params[2].Td, 2);
+        assert_eq!(scan_header.head_params[2].Ta, 0);
+        assert_eq!(scan_header.Ss, 0x05);
+        assert_eq!(scan_header.Se, 0x00);
+        assert_eq!(scan_header.Ah, 0x00);
+        assert_eq!(scan_header.Al, 0x00);
     }
 
     #[test]
     fn parse_huffman_info_good() {
-        let path = Path::new("/home/chad/rust/jpeg/tests/common/F-18.ljpg");
+        let mut path = env::current_dir().unwrap();
+        path.push("tests");
+        path.push("common");
+        path.push("F-18.ljpg");
+        let path = path.as_path();
         let encoded_image = get_file_as_byte_vec(path);
 
         let mut read_index = 0x15;
@@ -323,27 +365,31 @@ mod tests {
 
     #[test]
     fn parse_frame_header_good() {
-        let path = Path::new("/home/chad/rust/jpeg/tests/common/F-18.ljpg");
+        let mut path = env::current_dir().unwrap();
+        path.push("tests");
+        path.push("common");
+        path.push("F-18.ljpg");
+        let path = path.as_path();
         let encoded_image = get_file_as_byte_vec(path);
 
-        let (P, Y, X, components, read_index) = parse_frame_header(&encoded_image, 2);
+        let (frame_header, read_index) = parse_frame_header(&encoded_image, 2);
 
-        assert_eq!(P, 0x08);
-        assert_eq!(Y, 0x00F0);
-        assert_eq!(X, 0x0140);
-        assert_eq!(components.len(), 3);
-        assert_eq!(components[0].C, 0);
-        assert_eq!(components[0].H, 1);
-        assert_eq!(components[0].V, 1);
-        assert_eq!(components[0].Tq, 0);
-        assert_eq!(components[1].C, 1);
-        assert_eq!(components[1].H, 1);
-        assert_eq!(components[1].V, 1);
-        assert_eq!(components[1].Tq, 0);
-        assert_eq!(components[2].C, 2);
-        assert_eq!(components[2].H, 1);
-        assert_eq!(components[2].V, 1);
-        assert_eq!(components[2].Tq, 0);
+        assert_eq!(frame_header.P, 0x08);
+        assert_eq!(frame_header.Y, 0x00F0);
+        assert_eq!(frame_header.X, 0x0140);
+        assert_eq!(frame_header.components.len(), 3);
+        assert_eq!(frame_header.components[0].C, 0);
+        assert_eq!(frame_header.components[0].H, 1);
+        assert_eq!(frame_header.components[0].V, 1);
+        assert_eq!(frame_header.components[0].Tq, 0);
+        assert_eq!(frame_header.components[1].C, 1);
+        assert_eq!(frame_header.components[1].H, 1);
+        assert_eq!(frame_header.components[1].V, 1);
+        assert_eq!(frame_header.components[1].Tq, 0);
+        assert_eq!(frame_header.components[2].C, 2);
+        assert_eq!(frame_header.components[2].H, 1);
+        assert_eq!(frame_header.components[2].V, 1);
+        assert_eq!(frame_header.components[2].Tq, 0);
         assert_eq!(read_index, 21);
     }
 
@@ -394,17 +440,17 @@ mod tests {
     }
 
     #[test]
-    fn two_bytes_to_int_good() {
+    fn bytes_to_int_two_good() {
         let buffer = Vec::from([0xC2, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
         let expected = 7565_u16;
-        assert_eq!(two_bytes_to_int(&buffer[1..3]), expected);
+        assert_eq!(bytes_to_int_two(&buffer[1..3]), expected);
     }
 
     #[test]
-    fn two_bytes_to_int_fail() {
+    fn bytes_to_int_two_fail() {
         let buffer = Vec::from([0xC2, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
-        let expected = 7564;
-        assert_ne!(two_bytes_to_int(&buffer[1..3]), expected);
+        let expected = 7564_u16;
+        assert_ne!(bytes_to_int_two(&buffer[1..3]), expected);
     }
 }
 
