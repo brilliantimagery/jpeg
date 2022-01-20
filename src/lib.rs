@@ -15,14 +15,18 @@ const DHT: u16 = 0xFFC4;  // Define Huffman table(s)
 const EOI: u16 = 0xFFD9;  // End of image
 
 struct Context {
-    a: u8,
-    b: u8,
-    c: u8,
-    ix: u8,
+    a: u32,
+    b: u832
+    c: u32,
+    ix: u32,
 }
 
-struct Predictor {
-    a: u8
+struct Predictor<T> 
+where
+    T: Fn(u32) -> u32,
+{
+    middle: T,
+
 }
 
 struct Component {
@@ -263,28 +267,25 @@ fn bytes_to_int_two(bytes: &[u8]) -> u16 {
 fn decode_image(encoded_image: &Vec<u8>, frame_header: FrameHeader, scan_header: ScanHeader) {
     let width = frame_header.X as usize;
     let height = frame_header.Y as usize;
-    // let mut context: [u8; 5] = [0, 0, 0, 0, 0];
 
     let number_of_pixels = (width * height) as usize;
-    let mut x = 0;
-    let mut y = 0;
     let write_index = 0_usize;
 
-    let mut img: Vec<Vec<Vec<u8>>>= vec!(vec!(vec!(0; height); width); frame_header.components.len());
+    let mut img: Vec<Vec<Vec<u32>>>= vec!(vec!(vec!(0; height); width); frame_header.components.len());
 
     while write_index < number_of_pixels {
         for component in 0..frame_header.components.len() {
-            x = write_index % width;
-            y = write_index / width;
-            get_context(component, &x, &y, &scan_header.Al, &frame_header.P, &img);
+            let x = write_index % width;
+            let y = write_index / width;
+            let context = get_context(component, &x, &y, &scan_header.Al, &frame_header.P, &img);
         }
     }
 }
 
-fn get_context(component: usize, x: &usize, y: &usize, point_tranform: &u8, P: &u8, img: &Vec<Vec<Vec<u8>>>) -> Context {
-    let mut a: u8 = 0;
-    let mut b: u8 = 0;
-    let mut c: u8 = 0;
+fn get_context(component: usize, x: &usize, y: &usize, point_tranform: &u8, P: &u8, img: &Vec<Vec<Vec<u32>>>) -> Context {
+    let mut a: u32 = 0;
+    let mut b: u32 = 0;
+    let mut c: u32 = 0;
     let mut ix = img[component][*x][*y];
 
     if *y > 0 {
@@ -324,7 +325,7 @@ mod tests {
 
     #[test]
     fn get_context_top_left() {
-        let mut img = vec!(vec!(vec!(0_u8; 3); 4); 2);
+        let mut img = vec!(vec!(vec!(0_u32; 3); 4); 2);
         img[0][0] = Vec::from([1, 2, 3]);
         img[0][1] = Vec::from([4, 5, 6]);
         img[0][2] = Vec::from([7, 8, 9]);
@@ -346,7 +347,7 @@ mod tests {
 
     #[test]
     fn get_context_top_middle() {
-        let mut img = vec!(vec!(vec!(0_u8; 3); 4); 2);
+        let mut img = vec!(vec!(vec!(0_u32; 3); 4); 2);
         img[0][0] = Vec::from([1, 2, 3]);
         img[0][1] = Vec::from([4, 5, 6]);
         img[0][2] = Vec::from([7, 8, 9]);
@@ -368,7 +369,7 @@ mod tests {
 
     #[test]
     fn get_context_middle_left() {
-        let mut img = vec!(vec!(vec!(0_u8; 3); 4); 2);
+        let mut img = vec!(vec!(vec!(0_u32; 3); 4); 2);
         img[0][0] = Vec::from([1, 2, 3]);
         img[0][1] = Vec::from([4, 5, 6]);
         img[0][2] = Vec::from([7, 8, 9]);
@@ -390,7 +391,7 @@ mod tests {
 
     #[test]
     fn get_context_middle_middle() {
-        let mut img = vec!(vec!(vec!(0_u8; 3); 4); 2);
+        let mut img = vec!(vec!(vec!(0_u32; 3); 4); 2);
         img[0][0] = Vec::from([1, 2, 3]);
         img[0][1] = Vec::from([4, 5, 6]);
         img[0][2] = Vec::from([7, 8, 9]);
