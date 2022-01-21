@@ -55,7 +55,7 @@ where
 }
 
 struct Component {
-    C: u8,
+    // C: u8,
     H: u8,
     V: u8,
     Tq: u8,
@@ -65,19 +65,24 @@ struct FrameHeader {
     P: u8,
     Y: u16,
     X: u16,
-    components: Vec<Component>,
+    components: HashMap<u8, Component>,
 }
 
 struct ScanHeader {
-    head_params: Vec<HeaderParameter>,
+    // head_params: Vec<HeaderParameter>,
+    head_params: HashMap<u8, HeaderParameter>,
     Ss: u8,
     Se: u8,
     Ah: u8,
     Al: u8,
 }
 
+// impl ScanHeader {
+//     fn new()
+// }
+
 struct HeaderParameter {
-    Cs: u8,
+    // Cs: u8,
     Td: u8,
     Ta: u8,
 }
@@ -93,7 +98,7 @@ pub fn decode(encoded_image: Vec<u8>) {
     let mut read_index: usize = 2;
     let mut marker: u16;
     
-    let mut frame_header: FrameHeader;
+    let mut frame_header: FrameHeader = FrameHeader {P:0, X:0, Y:0, components:HashMap::new()};
 
     let mut ssss_tables: Vec<SSSSTable> = Vec::with_capacity(2);
     while read_index < encoded_image.len() {
@@ -217,13 +222,20 @@ fn parse_scan_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (ScanHea
     read_index += 2;
     let Ns = encoded_image[read_index] as usize;
     read_index += 1;
-    let mut head_params: Vec<HeaderParameter> = Vec::with_capacity(Ns);
+    // let mut head_params: Vec<HeaderParameter> = Vec::with_capacity(Ns);
+    let mut head_params: HashMap<u8, HeaderParameter> = HashMap::new();
     for param in 0..Ns {
-        head_params.push(HeaderParameter{
-            Cs: encoded_image[read_index],
-            Td: encoded_image[read_index + 1] >> 4,
-            Ta: encoded_image[read_index + 1] & 0xF,
-        });
+        head_params.insert(
+            encoded_image[read_index],
+            HeaderParameter {
+                Td: encoded_image[read_index + 1] >> 4,
+                Ta: encoded_image[read_index + 1] & 0xF,
+            });
+        // head_params.push(HeaderParameter{
+        //     Cs: encoded_image[read_index],
+        //     Td: encoded_image[read_index + 1] >> 4,
+        //     Ta: encoded_image[read_index + 1] & 0xF,
+        // });
         read_index += 2;
     }
     let Ss = encoded_image[read_index];
@@ -256,14 +268,21 @@ fn parse_frame_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (FrameH
     read_index += 2;
     let Nf: usize = encoded_image[read_index] as usize;
     read_index += 1;
-    let mut components: Vec<Component> = Vec::with_capacity(Nf);
+    let mut components: HashMap<u8, Component> = HashMap::new();
     for comp in 0..Nf as usize {
-        components.push(Component {
-            C: encoded_image[read_index],
-            H: encoded_image[read_index + 1] >> 4,
-            V: encoded_image[read_index + 1] & 0xF,
-            Tq: encoded_image[read_index + 2],
-        });
+        components.insert(
+            encoded_image[read_index],
+            Component {
+                H: encoded_image[read_index + 1] >> 4,
+                V: encoded_image[read_index + 1] & 0xF,
+                Tq: encoded_image[read_index + 2],
+            });
+        // components.push(Component {
+        //     C: encoded_image[read_index],
+        //     H: encoded_image[read_index + 1] >> 4,
+        //     V: encoded_image[read_index + 1] & 0xF,
+        //     Tq: encoded_image[read_index + 2],
+        // });
         read_index += 3
     }
 
@@ -281,7 +300,6 @@ fn is_jpeg(encoded_image: &Vec<u8>) -> bool {
     if bytes_to_int_two(&encoded_image[..2]) != SOI {
         panic!("This doesn't seem to be a JPEG.");
     }
-
     true
 }
 
@@ -299,37 +317,20 @@ fn decode_image(encoded_image: &Vec<u8>, frame_header: FrameHeader, scan_header:
     panic!("placeholder mumbo jumbo");
     let components = frame_header.components.len();
     let decoded_image: Vec<u32> = Vec::with_capacity(width * height * components);
-
-    let read_iondex: usize = 0; // needs to be base zero so sizes, locations can be caluclated
+    let image_start_index = read_index;
     while read_index < encoded_image.len() {
+        let image_index = read_index - image_start_index;
         let context = ContextContext {
-            component: read_index % components,
-            x: (read_index / components) % width,
-            y: (read_index / components) / width,
+            component: image_index % components,
+            x: (image_index / components) % width,
+            y: (image_index / components) / width,
             width: &width,
-            point_tranform: &2, 
-            P: &8, 
+            point_tranform: &scan_header.Ah, 
+            P: &frame_header.P, 
             img: &decoded_image,
         };
-        numb += get_prediction(context, &predictor);
+        let px = get_prediction(context, &scan_header.Ss);
     }
-
-    // while write_index < number_of_pixels {
-    //     for component in 0..frame_header.components.len() {
-    //         let context = ContextContext {
-    //             component:  % components,
-    //             x: ( / components) % width,
-    //             y: ( / components) / width,
-    //             width: &width,
-    //             point_tranform: &2, 
-    //             P: &8, 
-    //             img,
-    //         };
-    //         let x = write_index % width;
-    //         let y = write_index / width;
-    //         let context = get_context(component, &x, &y, &scan_header.Al, &frame_header.P, &img);
-    //     }
-    // }
 }
 
 fn get_context(component: &usize, x: &usize, y: &usize, width: &usize, point_tranform: &u8, P: &u8, img: &Vec<u32>) -> Context {
