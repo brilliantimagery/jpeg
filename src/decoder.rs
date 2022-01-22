@@ -1,8 +1,4 @@
-
-
 use std::collections::HashMap;
-
-const MIN_MARKER: u16 = 0xFF00;
 
 const SOF3: u16 = 0xFFC3;  // Lossless Huffman Encoding
 
@@ -90,8 +86,8 @@ pub fn decode(encoded_image: Vec<u8>) {
 
     let mut ssss_tables: Vec<SSSSTable> = Vec::with_capacity(2);
     while read_index < encoded_image.len() {
-        let marker: u16 = bytes_to_int_two(&encoded_image[read_index..read_index+2]);
-        match marker {
+        let possible_marker: u16 = bytes_to_int_two(&encoded_image[read_index..read_index+2]);
+        match possible_marker {
             SOF3 => {
                 let header_info = parse_frame_header(&encoded_image, read_index); 
 
@@ -101,13 +97,12 @@ pub fn decode(encoded_image: Vec<u8>) {
             DHT => {
                 let (huffman_table, read_index) = get_huffman_info(&encoded_image, read_index);
                 ssss_tables.push(huffman_table);
-                // read_index = huffman_info.1;
             },
             SOS => {
                 let (scan_header, read_index) = parse_scan_header(&encoded_image, read_index);
                 decode_image(&encoded_image, &frame_header, scan_header, read_index);
             },
-            x if x > MIN_MARKER => panic!("Not implimented marker!"),
+            marker if marker > 0xFF00 && marker < 0xFFFF => panic!("Unimplimented marker!"),
             _ => { read_index += 1; },
         }
     }
