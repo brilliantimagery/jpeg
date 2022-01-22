@@ -1,3 +1,5 @@
+#![feature(test)]
+
 mod decoder;
 
 pub fn decode_image(encoded_image: Vec<u8>) {
