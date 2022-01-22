@@ -26,6 +26,7 @@ struct ContextContext<'a> {
     x: usize,
     y: usize,
     width: &'a usize,
+    numb_of_components: &'a usize,
     point_tranform: &'a u8, 
     P: &'a u8, 
     img: &'a Vec<u32>,
@@ -33,13 +34,13 @@ struct ContextContext<'a> {
 
 impl ContextContext<'_> {
     fn a (&self) -> u32 {
-        self.img[(self.component * self.x * self.y) + (self.y * self.width) + (self.x-1)]
+        self.img[(self.x-1) * self.numb_of_components + self.y * self.width * self.numb_of_components + self.component]
     }
     fn b (&self) -> u32 {
-        self.img[(self.component * self.x * self.y) + ((self.y - 1) * self.width) + (self.x)]
+        self.img[self.x * self.numb_of_components + (self.y - 1) * self.width * self.numb_of_components + self.component]
     }
     fn c (&self) -> u32 {
-        self.img[(self.component * self.x * self.y) + ((self.y - 1) * self.width) + (self.x-1)]
+        self.img[(self.x-1) * self.numb_of_components + (self.y - 1) * self.width * self.numb_of_components + self.component]
     }
     fn ix (&self) -> u32 {
         1 << (self.P - self.point_tranform - 1)
@@ -117,7 +118,7 @@ pub fn decode(encoded_image: Vec<u8>) {
             },
             SOS => {
                 let (scan_header, read_index) = parse_scan_header(&encoded_image, read_index);
-                decode_image(&encoded_image, frame_header, scan_header, read_index);
+                decode_image(&encoded_image, &frame_header, scan_header, read_index);
             },
             x if x > MIN_MARKER => panic!("Not implimented marker!"),
             _ => { read_index += 1; },
@@ -307,7 +308,7 @@ fn bytes_to_int_two(bytes: &[u8]) -> u16 {
     (bytes[0] as u16) << 8 | bytes[1] as u16
 }
 
-fn decode_image(encoded_image: &Vec<u8>, frame_header: FrameHeader, scan_header: ScanHeader, read_index: usize) {
+fn decode_image(encoded_image: &Vec<u8>, frame_header: &FrameHeader, scan_header: ScanHeader, read_index: usize) {
     let width = frame_header.X as usize;
     let height = frame_header.Y as usize;
 
@@ -315,44 +316,23 @@ fn decode_image(encoded_image: &Vec<u8>, frame_header: FrameHeader, scan_header:
     let write_index = 0_usize;
 
     panic!("placeholder mumbo jumbo");
-    let components = frame_header.components.len();
-    let decoded_image: Vec<u32> = Vec::with_capacity(width * height * components);
+    let numb_of_components = frame_header.components.len();
+    let decoded_image: Vec<u32> = Vec::with_capacity(width * height * numb_of_components);
     let image_start_index = read_index;
     while read_index < encoded_image.len() {
         let image_index = read_index - image_start_index;
         let context = ContextContext {
-            component: image_index % components,
-            x: (image_index / components) % width,
-            y: (image_index / components) / width,
+            component: image_index % numb_of_components,
+            x: (image_index / numb_of_components) % width,
+            y: (image_index / numb_of_components) / width,
             width: &width,
+            numb_of_components: &numb_of_components,
             point_tranform: &scan_header.Ah, 
             P: &frame_header.P, 
             img: &decoded_image,
         };
         let px = get_prediction(context, &scan_header.Ss);
     }
-}
-
-fn get_context(component: &usize, x: &usize, y: &usize, width: &usize, point_tranform: &u8, P: &u8, img: &Vec<u32>) -> Context {
-    let mut a: u32 = 0;
-    let mut b: u32 = 0;
-    let mut c: u32 = 0;
-    let mut ix: u32 = 0;
-
-    if *y == 0 {
-        if *x == 0 {
-            ix = 1 << (P - point_tranform - 1);
-        } else {
-            a = img[(component * x * y) + (y * width) + (x-1)];
-        }
-    } else {
-        if *x != 0 {
-            a = img[(component * x * y) + (y * width) + (x-1)];
-            c = img[(component * x * y) + ((y - 1) * width) + (x - 1)];
-        }
-        b = img[(component * x * y) + ((y - 1) * width) + x];
-    }
-    Context {a, b, c, ix}
 }
 
 fn  get_prediction(context: ContextContext, predictor: &u8) -> u32 {
@@ -404,92 +384,138 @@ mod tests {
         encoded_image
     }
 
-    #[test]
-    fn get_context_top_left() {
-        let mut img = vec!(vec!(vec!(0_u32; 3); 4); 2);
-        img[0][0] = Vec::from([1, 2, 3]);
-        img[0][1] = Vec::from([4, 5, 6]);
-        img[0][2] = Vec::from([7, 8, 9]);
-        img[0][3] = Vec::from([10, 11, 12]);
+    // fn get_ContextContext<'a>() -> ContextContext + 'a {
+    //     let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
+    //     let components: usize = 2;
+    //     let width: usize = 4;
+    //     let image_index: usize = 11;
+    //     let Ah: u8 = 2;
+    //     let P: u8 = 8;
 
-        let component: usize = 0;
-        let x: usize = 0;
-        let y: usize = 0;
-        let point_transform: u8 = 2;
+    //     ContextContext {
+    //         component: image_index % components,
+    //         x: (image_index / components) % width,
+    //         y: (image_index / components) / width,
+    //         width: &width,
+    //         point_tranform: &Ah, 
+    //         P: &P,
+    //         img: &img,
+    //     }
+    // }
+
+    #[test]
+    fn ContextContext_a_good() {
+        // let context = get_ContextContext();
+        let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
+        // 1, 2, 3, 4, 5, 6, 7, 8, 
+        // 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212
+        let components: usize = 2;
+        let width: usize = 4;
+        let image_index: usize = 10;
+        let Ah: u8 = 2;
         let P: u8 = 8;
 
-        let context = get_context(component, &x, &y, &point_transform, &P, &img);
+        let context = ContextContext {
+            component: image_index % components,
+            x: (image_index / components) % width,
+            y: (image_index / components) / width,
+            width: &width,
+            numb_of_components: &components,
+            point_tranform: &Ah, 
+            P: &P,
+            img: &img,
+        };
 
-        assert_eq!(context.a, 1 << (P - point_transform - 1));
-        assert_eq!(context.b, 0);
-        assert_eq!(context.c, 0);
-        assert_eq!(context.ix, img[component][x][y]);
+        let a = context.a();
+
+        assert_eq!(a, 9);
     }
 
     #[test]
-    fn get_context_top_middle() {
-        let mut img = vec!(vec!(vec!(0_u32; 3); 4); 2);
-        img[0][0] = Vec::from([1, 2, 3]);
-        img[0][1] = Vec::from([4, 5, 6]);
-        img[0][2] = Vec::from([7, 8, 9]);
-        img[0][3] = Vec::from([10, 11, 12]);
-
-        let component: usize = 0;
-        let x: usize = 1;
-        let y: usize = 0;
-        let point_transform: u8 = 2;
+    fn ContextContext_b_good() {
+        // let context = get_ContextContext();
+        let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
+        // 1, 2, 3, 4, 5, 6, 7, 8, 
+        // 9, 10, 11, 12, 21, 22, 23, 24, 
+        // 25, 26, 27, 28, 29, 210, 211, 212
+        let components: usize = 2;
+        let width: usize = 4;
+        let image_index: usize = 10;
+        let Ah: u8 = 2;
         let P: u8 = 8;
 
-        let context = get_context(component, &x, &y, &point_transform, &P, &img);
+        let context = ContextContext {
+            component: image_index % components,
+            x: (image_index / components) % width,
+            y: (image_index / components) / width,
+            width: &width,
+            numb_of_components: &components,
+            point_tranform: &Ah, 
+            P: &P,
+            img: &img,
+        };
 
-        assert_eq!(context.a, img[component][x - 1][y]);
-        assert_eq!(context.b, 0);
-        assert_eq!(context.c, 0);
-        assert_eq!(context.ix, img[component][x][y]);
+        let b = context.b();
+
+        assert_eq!(b, 3);
     }
 
     #[test]
-    fn get_context_middle_left() {
-        let mut img = vec!(vec!(vec!(0_u32; 3); 4); 2);
-        img[0][0] = Vec::from([1, 2, 3]);
-        img[0][1] = Vec::from([4, 5, 6]);
-        img[0][2] = Vec::from([7, 8, 9]);
-        img[0][3] = Vec::from([10, 11, 12]);
-
-        let component: usize = 0;
-        let x: usize = 0;
-        let y: usize = 1;
-        let point_transform: u8 = 2;
+    fn ContextContext_c_good() {
+        // let context = get_ContextContext();
+        let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
+        // 1, 2, 3, 4, 5, 6, 7, 8, 
+        // 9, 10, 11, 12, 21, 22, 23, 24, 
+        // 25, 26, 27, 28, 29, 210, 211, 212
+        let components: usize = 2;
+        let width: usize = 4;
+        let image_index: usize = 10;
+        let Ah: u8 = 2;
         let P: u8 = 8;
 
-        let context = get_context(component, &x, &y, &point_transform, &P, &img);
+        let context = ContextContext {
+            component: image_index % components,
+            x: (image_index / components) % width,
+            y: (image_index / components) / width,
+            width: &width,
+            numb_of_components: &components,
+            point_tranform: &Ah, 
+            P: &P,
+            img: &img,
+        };
 
-        assert_eq!(context.a, 0);
-        assert_eq!(context.b, img[component][x][y - 1]);
-        assert_eq!(context.c, 0);
-        assert_eq!(context.ix, img[component][x][y]);
+        let c = context.c();
+
+        assert_eq!(c, 1);
     }
 
     #[test]
-    fn get_context_middle_middle() {
-        let mut img = vec!(vec!(vec!(0_u32; 3); 4); 2);
-        img[0][0] = Vec::from([1, 2, 3]);
-        img[0][1] = Vec::from([4, 5, 6]);
-        img[0][2] = Vec::from([7, 8, 9]);
-        img[0][3] = Vec::from([10, 11, 12]);
-
-        let component: usize = 0;
-        let x: usize = 1;
-        let y: usize = 1;
-        let point_transform: u8 = 2;
+    fn ContextContext_ix_good() {
+        // let context = get_ContextContext();
+        let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
+        // 1, 2, 3, 4, 5, 6, 7, 8, 
+        // 9, 10, 11, 12, 21, 22, 23, 24, 
+        // 25, 26, 27, 28, 29, 210, 211, 212
+        let components: usize = 2;
+        let width: usize = 4;
+        let image_index: usize = 10;
+        let Ah: u8 = 2;
         let P: u8 = 8;
 
-        let context = get_context(component, &x, &y, &point_transform, &P, &img);
+        let context = ContextContext {
+            component: image_index % components,
+            x: (image_index / components) % width,
+            y: (image_index / components) / width,
+            width: &width,
+            numb_of_components: &components,
+            point_tranform: &Ah, 
+            P: &P,
+            img: &img,
+        };
 
-        assert_eq!(context.a, img[component][x - 1][y]);
-        assert_eq!(context.b, img[component][x][y - 1]);
-        assert_eq!(context.c, img[component][x - 1][y - 1]);
-        assert_eq!(context.ix, img[component][x][y]);
+        let ix = context.ix();
+
+        assert_eq!(ix, 1 << (P - Ah - 1));
     }
 
     #[test]
@@ -504,15 +530,12 @@ mod tests {
         let (scan_header, read_index) = parse_scan_header(&encoded_image, 0x70);
 
         assert_eq!(scan_header.head_params.len(), 3);
-        assert_eq!(scan_header.head_params[0].Cs, 0);
-        assert_eq!(scan_header.head_params[0].Td, 0);
-        assert_eq!(scan_header.head_params[0].Ta, 0);
-        assert_eq!(scan_header.head_params[1].Cs, 1);
-        assert_eq!(scan_header.head_params[1].Td, 1);
-        assert_eq!(scan_header.head_params[1].Ta, 0);
-        assert_eq!(scan_header.head_params[2].Cs, 2);
-        assert_eq!(scan_header.head_params[2].Td, 2);
-        assert_eq!(scan_header.head_params[2].Ta, 0);
+        assert_eq!(scan_header.head_params.get(&0).unwrap().Td, 0);
+        assert_eq!(scan_header.head_params.get(&0).unwrap().Ta, 0);
+        assert_eq!(scan_header.head_params.get(&1).unwrap().Td, 1);
+        assert_eq!(scan_header.head_params.get(&1).unwrap().Ta, 0);
+        assert_eq!(scan_header.head_params.get(&2).unwrap().Td, 2);
+        assert_eq!(scan_header.head_params.get(&2).unwrap().Ta, 0);
         assert_eq!(scan_header.Ss, 0x05);
         assert_eq!(scan_header.Se, 0x00);
         assert_eq!(scan_header.Ah, 0x00);
@@ -574,8 +597,7 @@ mod tests {
 
         let tables = make_ssss_table(code_lengths);
 
-        assert_eq!(tables, expected);
-                       
+        assert_eq!(tables, expected);                       
     }
 
     #[test]
@@ -593,50 +615,16 @@ mod tests {
         assert_eq!(frame_header.Y, 0x00F0);
         assert_eq!(frame_header.X, 0x0140);
         assert_eq!(frame_header.components.len(), 3);
-        assert_eq!(frame_header.components[0].C, 0);
-        assert_eq!(frame_header.components[0].H, 1);
-        assert_eq!(frame_header.components[0].V, 1);
-        assert_eq!(frame_header.components[0].Tq, 0);
-        assert_eq!(frame_header.components[1].C, 1);
-        assert_eq!(frame_header.components[1].H, 1);
-        assert_eq!(frame_header.components[1].V, 1);
-        assert_eq!(frame_header.components[1].Tq, 0);
-        assert_eq!(frame_header.components[2].C, 2);
-        assert_eq!(frame_header.components[2].H, 1);
-        assert_eq!(frame_header.components[2].V, 1);
-        assert_eq!(frame_header.components[2].Tq, 0);
+        assert_eq!(frame_header.components.get(&0).unwrap().H, 1);
+        assert_eq!(frame_header.components.get(&0).unwrap().V, 1);
+        assert_eq!(frame_header.components.get(&0).unwrap().Tq, 0);
+        assert_eq!(frame_header.components.get(&1).unwrap().H, 1);
+        assert_eq!(frame_header.components.get(&1).unwrap().V, 1);
+        assert_eq!(frame_header.components.get(&1).unwrap().Tq, 0);
+        assert_eq!(frame_header.components.get(&2).unwrap().H, 1);
+        assert_eq!(frame_header.components.get(&2).unwrap().V, 1);
+        assert_eq!(frame_header.components.get(&2).unwrap().Tq, 0);
         assert_eq!(read_index, 21);
-    }
-
-    #[test]
-    fn number_of_used_bits_32() {
-        let n = 0xFFFFFFFF / 2 + 1;
-        assert_eq!(number_of_used_bits(&n), 32);
-    }
-
-    #[test]
-    fn number_of_used_bits_4() {
-        let n = 0xF;
-        assert_eq!(number_of_used_bits(&n), 4);
-    }
-
-    #[test]
-    fn number_of_used_bits_2() {
-        let n = 3;
-        assert_eq!(number_of_used_bits(&n), 2);
-        assert_eq!(number_of_used_bits(&n), 2);
-    }
-
-    #[test]
-    fn number_of_used_bits_1() {
-        let n = 1;
-        assert_eq!(number_of_used_bits(&n), 1);
-    }
-
-    #[test]
-    fn number_of_used_bits_0() {
-        let n = 0;
-        assert_eq!(number_of_used_bits(&n), 0);
     }
 
     #[test]
