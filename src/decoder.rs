@@ -18,7 +18,7 @@ struct Context {
 }
 
 struct ContextContext<'a> {
-    component: usize,
+    component: &'a usize,
     x_position: usize,
     y_position: usize,
     width: &'a usize,
@@ -44,7 +44,6 @@ impl ContextContext<'_> {
 }
 
 struct Component {
-    // C: u8,
     h_: u8,
     v_: u8,
     t_q: u8,
@@ -58,7 +57,6 @@ struct FrameHeader {
 }
 
 struct ScanHeader {
-    // head_params: Vec<HeaderParameter>,
     head_params: HashMap<u8, HeaderParameter>,
     s_s: u8,
     s_e: u8,
@@ -67,7 +65,6 @@ struct ScanHeader {
 }
 
 struct HeaderParameter {
-    // Cs: u8,
     t_d: u8,
     t_a: u8,
 }
@@ -76,6 +73,8 @@ struct SSSSTable {
     t_c: u8,
     t_h: u8,
     table: HashMap<u32, u8>,
+    min_code_length: usize,
+    max_code_length: usize,
 }
 
 pub fn decode(encoded_image: Vec<u8>) {
@@ -84,7 +83,8 @@ pub fn decode(encoded_image: Vec<u8>) {
     
     let mut frame_header: FrameHeader = FrameHeader {p_:0, x_:0, y_:0, components:HashMap::new()};
 
-    let mut ssss_tables: Vec<SSSSTable> = Vec::with_capacity(2);
+    // let mut ssss_tables: Vec<SSSSTable> = Vec::with_capacity(2);
+    let mut ssss_tables: HashMap<usize, SSSSTable> = HashMap::new();
     while read_index < encoded_image.len() {
         let possible_marker: u16 = bytes_to_int_two(&encoded_image[read_index..read_index+2]);
         match possible_marker {
@@ -96,11 +96,12 @@ pub fn decode(encoded_image: Vec<u8>) {
             },
             DHT => {
                 let (huffman_table, read_index) = get_huffman_info(&encoded_image, read_index);
-                ssss_tables.push(huffman_table);
+                // ssss_tables.push(huffman_table);
+                ssss_tables.insert(huffman_table.t_h as usize, huffman_table);
             },
             SOS => {
                 let (scan_header, read_index) = parse_scan_header(&encoded_image, read_index);
-                decode_image(&encoded_image, &frame_header, scan_header, read_index);
+                decode_image(&encoded_image, &frame_header, scan_header, &ssss_tables, read_index);
             },
             marker if marker > 0xFF00 && marker < 0xFFFF => panic!("Unimplimented marker!"),
             _ => { read_index += 1; },
@@ -111,12 +112,14 @@ pub fn decode(encoded_image: Vec<u8>) {
 fn get_huffman_info(encoded_image: &Vec<u8>, read_index: usize) -> (SSSSTable, usize) {
     let (t_c, t_h, code_lengths, read_index) = parse_huffman_info(&encoded_image, read_index);
 
-    let table = make_ssss_table(code_lengths);
+    let (table, min_code_length, max_code_length) = make_ssss_table(code_lengths);
 
     (SSSSTable {
         t_c,
         t_h,
-        table
+        table,
+        min_code_length,
+        max_code_length,
     }, read_index)
 }
 
@@ -147,9 +150,10 @@ fn parse_huffman_info(encoded_image: &Vec<u8>, mut read_index: usize) -> (u8, u8
     (t_c, t_h, code_lengths, vij_index)
 }
 
-fn make_ssss_table(code_lengths: [[u8; 16]; 16]) -> HashMap<u32, u8> {
-    // store the huffman code in the bits of a u32
-    let mut code: u32 = 1;  // start with a 1 so there can be leading zeros
+fn make_ssss_table(code_lengths: [[u8; 16]; 16]) -> (HashMap<u32, u8>, usize, usize) {
+    // storing the huffman code in the bits of a u32
+    // the code is preceided by a 1 so there can be leading zeros
+    let mut code: u32 = 1;
     let mut table: HashMap<u32, u8> = HashMap::new();
     for index in 0..16 {
         if code_lengths[index][0] < 0xFF_u8 {
@@ -177,8 +181,21 @@ fn make_ssss_table(code_lengths: [[u8; 16]; 16]) -> HashMap<u32, u8> {
             }
         }
     }
-    
-    table
+
+    let mut min_code_length: usize = 100;
+    let mut max_code_length: usize = 0;
+
+    for v in table.keys() {
+        let length = number_of_used_bits(v) - 1;
+        if length < min_code_length {
+            min_code_length = length;
+        }
+        if length > max_code_length {
+            max_code_length = length;
+        }
+    }
+
+    (table, min_code_length, max_code_length)
 }
 
 fn number_of_used_bits(numb: &u32) -> usize {
@@ -269,28 +286,39 @@ fn bytes_to_int_two(bytes: &[u8]) -> u16 {
     (bytes[0] as u16) << 8 | bytes[1] as u16
 }
 
-fn decode_image(encoded_image: &Vec<u8>, frame_header: &FrameHeader, scan_header: ScanHeader, read_index: usize) {
+fn decode_image(encoded_image: &Vec<u8>, frame_header: &FrameHeader, scan_header: 
+    ScanHeader, ssss_tables: &HashMap<usize, SSSSTable>, read_index: usize) -> Vec<u32> {
+        
     let width = frame_header.x_ as usize;
     let height = frame_header.y_ as usize;
 
     // panic!("placeholder mumbo jumbo");
     let numb_of_components = frame_header.components.len();
-    let decoded_image: Vec<u32> = Vec::with_capacity(width * height * numb_of_components);
+    let mut raw_image: Vec<u32> = Vec::with_capacity(width * height * numb_of_components);
     let image_start_index = read_index;
-    while read_index < encoded_image.len() {
+
+    let (image_bits, read_index) = get_image_data_without_stuffed_zero_bytes(&encoded_image, read_index);
+    let bit_read_index: usize = 0;
+
+    while bit_read_index < image_bits.len() {
         let image_index = read_index - image_start_index;
+        let component = image_index % numb_of_components;
         let context = ContextContext {
-            component: image_index % numb_of_components,
+            component: &component,
             x_position: (image_index / numb_of_components) % width,
             y_position: (image_index / numb_of_components) / width,
             width: &width,
-            numb_of_components: &numb_of_components,
+            numb_of_components: &&numb_of_components,
             point_tranform: &scan_header.a_h, 
             p_: &frame_header.p_, 
-            img: &decoded_image,
+            img: &raw_image,
         };
-        let _p_x = get_prediction(context, &scan_header.s_s);
+        let p_x = get_prediction(context, &scan_header.s_s);
+        let (pixel_delta, bit_read_index) = get_huffmaned_value(ssss_tables.get(&component).unwrap(), &image_bits, bit_read_index);
+        raw_image.push(((p_x as i32 + pixel_delta) & ((1 << frame_header.p_) - 1)) as u32);
     }
+
+    raw_image
 }
 
 fn  get_prediction(context: ContextContext, predictor: &u8) -> u32 {
@@ -320,6 +348,97 @@ fn  get_prediction(context: ContextContext, predictor: &u8) -> u32 {
     }
 }
 
+fn get_image_data_without_stuffed_zero_bytes(encoded_image: &Vec<u8>, mut read_index: usize) -> (Vec<u8>, usize) {
+    // See JPG document 10918-1 P33 B.1.1.5 Note 2
+    let mut image_data: Vec<u8> = Vec::with_capacity(encoded_image.len());
+    let mut write_index: usize = 0;
+
+    loop {
+        if encoded_image[read_index] < 0xFF {
+            // if the current element is less then 0xFF the proceide as usual
+            image_data.push(encoded_image[read_index]);
+            read_index += 1;
+            write_index += 1;
+        } else if encoded_image[read_index + 1] == 0 {
+            // given that the current element is 0xFF
+            // if the next element is zero then
+            // this element should be read and the next is a "zero byte"
+            // which was added to avoid confusion with markers and should be discarded
+            image_data.push(encoded_image[read_index]);
+            read_index += 2;
+            write_index += 1;
+        } else {
+            // Hit the end of the section
+            break;
+        }
+    }
+
+    let mut bits: Vec<u8> = Vec::with_capacity(write_index * 8);
+
+    for i in 0..write_index {
+        bits.push((image_data[i] >> 7) & 1);
+        bits.push((image_data[i] >> 6) & 1);
+        bits.push((image_data[i] >> 5) & 1);
+        bits.push((image_data[i] >> 4) & 1);
+        bits.push((image_data[i] >> 3) & 1);
+        bits.push((image_data[i] >> 2) & 1);
+        bits.push((image_data[i] >> 1) & 1);
+        bits.push((image_data[i] >> 0) & 1);
+    }
+
+    (bits, read_index)
+}
+
+fn get_huffmaned_value(ssss_table: &SSSSTable, image_bits: &Vec<u8>, mut bit_read_index: usize) -> (i32, usize) {
+    let mut ssss: u8 = 0xFF;
+    let mut guess: u32 = 1;
+
+    for _ in 0..ssss_table.min_code_length - 1 {
+        guess = (guess << 1) | (image_bits[bit_read_index] as u32);
+        bit_read_index += 1;
+    }
+
+    for _ in 0..ssss_table.max_code_length {
+        guess = (guess << 1) | (image_bits[bit_read_index] as u32);
+        bit_read_index += 1;
+        if ssss_table.table.contains_key(&guess) {
+            ssss = ssss_table.table[&guess];
+            break;
+        }
+    }
+
+    match ssss {
+        0xFF => {
+            // if no code is matched return a zero, this was said to be the safest somewhere
+            // TODO: should if break or be error resistant? also goes for down below
+            panic!("No matching Huffman code was found for a lossless tile jpeg.")
+            // warnings.warn('A Huffman coding error was found in a lossless jpeg in a dng; it may'
+            //               + ' have been resolved, there may be corrupted data')
+        },
+        16 => (32768, bit_read_index),
+        _ => {
+            let mut pixel_diff: u16 = 0;
+            if ssss > 0 {
+                let first_bit = image_bits[bit_read_index];
+                // step thru the ssss number of bits to get the coded number
+                for _ in 0..ssss {
+                    pixel_diff = (pixel_diff << 1) | (image_bits[bit_read_index] as u16);
+                    bit_read_index += 1;
+                }
+                // if the first read bit is 0 the number is negative and has to be calculated
+                if first_bit == 0 {
+                    (-1 * ((1 << ssss) - (pixel_diff + 1)) as i32, bit_read_index)
+                    // (-(1 << ssss) + pixel_diff + 1, bit_read_index)
+                } else {
+                    (pixel_diff as i32, bit_read_index)
+                }
+            } else {
+                (0, bit_read_index)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate test;
@@ -339,6 +458,117 @@ mod tests {
         file.read_to_end(&mut encoded_image);
 
         encoded_image
+    }
+
+    #[test]
+    fn get_huffmaned_value_0_bits() {
+        let ssss_table = SSSSTable {
+            t_c: 0,
+            t_h: 0,
+            table: HashMap::from([(4, 0), (30, 4), (6, 2), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            min_code_length: 2,
+            max_code_length: 8,
+        };
+        let image_bits: Vec<u8> = Vec::from([1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, ]);
+        
+        let (pixel_diff, bit_read_index) = get_huffmaned_value(&ssss_table, &image_bits, 1);
+        assert_eq!(pixel_diff, 0);
+        assert_eq!(bit_read_index, 3);
+    }
+
+    #[test]
+    fn get_huffmaned_value_1_bit() {
+        let ssss_table = SSSSTable {
+            t_c: 0,
+            t_h: 0,
+            table: HashMap::from([(4, 0), (30, 4), (6, 2), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            min_code_length: 2,
+            max_code_length: 8,
+        };
+        let image_bits: Vec<u8> = Vec::from([1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, ]);
+        
+        let (pixel_diff, bit_read_index) = get_huffmaned_value(&ssss_table, &image_bits, 1);
+        assert_eq!(pixel_diff, 1);
+        assert_eq!(bit_read_index, 4);
+    }
+
+    #[test]
+    fn get_huffmaned_value_1_bit_neg() {
+        let ssss_table = SSSSTable {
+            t_c: 0,
+            t_h: 0,
+            table: HashMap::from([(4, 0), (30, 4), (6, 2), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            min_code_length: 2,
+            max_code_length: 8,
+        };
+        let image_bits: Vec<u8> = Vec::from([1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, ]);
+        
+        let (pixel_diff, bit_read_index) = get_huffmaned_value(&ssss_table, &image_bits, 1);
+        assert_eq!(pixel_diff, -1);
+        assert_eq!(bit_read_index, 4);
+    }
+
+    #[test]
+    fn get_huffmaned_value_2_bits() {
+        let ssss_table = SSSSTable {
+            t_c: 0,
+            t_h: 0,
+            table: HashMap::from([(4, 0), (30, 4), (6, 2), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            min_code_length: 2,
+            max_code_length: 8,
+        };
+        let image_bits: Vec<u8> = Vec::from([1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, ]);
+        
+        let (pixel_diff, bit_read_index) = get_huffmaned_value(&ssss_table, &image_bits, 1);
+        assert_eq!(pixel_diff, 3);
+        assert_eq!(bit_read_index, 5);
+    }
+
+    #[test]
+    fn get_huffmaned_value_2_bits_neg() {
+        let ssss_table = SSSSTable {
+            t_c: 0,
+            t_h: 0,
+            table: HashMap::from([(4, 0), (30, 4), (6, 2), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            min_code_length: 2,
+            max_code_length: 8,
+        };
+        let image_bits: Vec<u8> = Vec::from([1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, ]);
+        
+        let (pixel_diff, bit_read_index) = get_huffmaned_value(&ssss_table, &image_bits, 1);
+        assert_eq!(pixel_diff, -3);
+        assert_eq!(bit_read_index, 5);
+    }
+
+    #[test]
+    fn get_huffmaned_value_16_bits() {
+        let ssss_table = SSSSTable {
+            t_c: 0,
+            t_h: 0,
+            table: HashMap::from([(4, 0), (30, 4), (6, 16), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            min_code_length: 2,
+            max_code_length: 16,
+        };
+        let image_bits: Vec<u8> = Vec::from([1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, ]);
+        
+        let (pixel_diff, bit_read_index) = get_huffmaned_value(&ssss_table, &image_bits, 1);
+        assert_eq!(pixel_diff, 32768);
+        assert_eq!(bit_read_index, 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "No matching Huffman code was found for a lossless tile jpeg.")]
+    fn get_huffmaned_value_panic() {
+        let ssss_table = SSSSTable {
+            t_c: 0,
+            t_h: 0,
+            table: HashMap::from([(4, 0), (30, 4), (6, 16), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            min_code_length: 2,
+            max_code_length: 8,
+        };
+        let image_bits: Vec<u8> = Vec::from([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
+        
+        let (_pixel_diff, _bit_read_index) = get_huffmaned_value(&ssss_table, &image_bits, 1);
     }
 
     // fn get_ContextContext<'a>() -> ContextContext + 'a {
@@ -361,6 +591,18 @@ mod tests {
     // }
 
     #[test]
+    fn get_image_data_without_stuffed_zero_bytes_good() {
+        let encoded_image: Vec<u8> = Vec::from([0x00, 0xFE, 0x00, 0xFF, 0x00, 0x05, 0xFF, 0xDA]);
+        let expected_bits: Vec<u8> = Vec::from([1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
+        let read_index: usize = 1;
+
+        let (actual_bits, read_index) = get_image_data_without_stuffed_zero_bytes(&encoded_image, read_index);
+
+        assert_eq!(actual_bits, expected_bits);
+        assert_eq!(read_index, 6);
+    }
+
+    #[test]
     fn contextcontext_a_good() {
         // let context = get_ContextContext();
         let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
@@ -373,7 +615,7 @@ mod tests {
         let p_: u8 = 8;
 
         let context = ContextContext {
-            component: image_index % components,
+            component: &(image_index % components),
             x_position: (image_index / components) % width,
             y_position: (image_index / components) / width,
             width: &width,
@@ -399,7 +641,7 @@ mod tests {
         let p_: u8 = 8;
 
         let context = ContextContext {
-            component: image_index % components,
+            component: &(image_index % components),
             x_position: (image_index / components) % width,
             y_position: (image_index / components) / width,
             width: &width,
@@ -428,7 +670,7 @@ mod tests {
         let p_: u8 = 8;
 
         let context = ContextContext {
-            component: image_index % components,
+            component: &(image_index % components),
             x_position: (image_index / components) % width,
             y_position: (image_index / components) / width,
             width: &width,
@@ -457,7 +699,7 @@ mod tests {
         let p_: u8 = 8;
 
         let context = ContextContext {
-            component: image_index % components,
+            component: &(image_index % components),
             x_position: (image_index / components) % width,
             y_position: (image_index / components) / width,
             width: &width,
@@ -553,9 +795,11 @@ mod tests {
 
         let expected = HashMap::from([(4, 0), (30, 4), (6, 2), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]);
 
-        let tables = make_ssss_table(code_lengths);
+        let (tables, min_code_length, max_code_length) = make_ssss_table(code_lengths);
 
-        assert_eq!(tables, expected);                       
+        assert_eq!(tables, expected);   
+        assert_eq!(min_code_length, 2);
+        assert_eq!(max_code_length, 8);
     }
 
     #[bench]
