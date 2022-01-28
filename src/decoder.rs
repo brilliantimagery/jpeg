@@ -1,30 +1,32 @@
 use std::collections::HashMap;
 
+const SOF0: u16 = 0xFFC0;  // Baseline DCT
 const SOF3: u16 = 0xFFC3;  // Lossless Huffman Encoding
 
-const SOI: u16 = 0xFFD8;  // Start of image
-
-const SOS: u16 = 0xFFDA;  // Start of scan
-const DQT: u16 = 0xFFDB;  // Define quantization table(s)
 const DHT: u16 = 0xFFC4;  // Define Huffman table(s)
 
+const SOI: u16 = 0xFFD8;  // Start of image
 const EOI: u16 = 0xFFD9;  // End of image
+const SOS: u16 = 0xFFDA;  // Start of scan
+const DQT: u16 = 0xFFDB;  // Define quantization table(s)
+const APP: u16 = 0xFFE0;  //Reserved for application segments
+const APPn: u16 = 0xFFEF;  //Reserved for application segments
 
-struct Context {
-    r_a: u32,
-    r_b: u32,
-    r_c: u32,
-    r_ix: u32,
-}
+// struct Context {
+//     r_a: u32,
+//     r_b: u32,
+//     r_c: u32,
+//     r_ix: u32,
+// }
 
 struct ContextContext<'a> {
     component: &'a usize,
-    x_position: usize,
+    x_position: usize,              
     y_position: usize,
     width: &'a usize,
     numb_of_components: &'a usize,
     point_tranform: &'a u8, 
-    p_: &'a u8, 
+    p_: &'a u8,                     // Sample precision
     img: &'a Vec<u32>,
 }
 
@@ -44,47 +46,49 @@ impl ContextContext<'_> {
 }
 
 struct Component {
-    h_: u8,
-    v_: u8,
-    t_q: u8,
+    c_: u8,             // Component identifier, 10918-1 P. 36
+    h_: u8,             // Horizontal sampling factor
+    v_: u8,             // Vertical sampling factor
+    t_q: u8,            // Quantiziation table destination selector; Not used (0), for lossless
 }
 
-struct FrameHeader {
-    p_: u8,
-    y_: u16,
-    x_: u16,
+struct FrameHeader {    // Frame Header, 10918-1, B.2.2, P. 35
+    p_: u8,             // Sample precision
+    y_: u16,            // Number of lines
+    x_: u16,            // Number of samples per line
     components: HashMap<u8, Component>,
 }
 
-struct ScanHeader {
+struct ScanHeader {     // Scan Header, 10918-1, B.2.3, P. 35
     head_params: HashMap<u8, HeaderParameter>,
-    s_s: u8,
-    s_e: u8,
-    a_h: u8,
-    a_l: u8,
+    s_s: u8,            // Start of Spectral selection; predictor selector in lossless
+    s_e: u8,            // End of Spectral or prediction selection; 0, not used, in lossless
+    a_h: u8,            // Successive aproximamtion bit position high, 0, not used, in lossless
+    a_l: u8,            // Successive approximation bit position low; point transform, Pt, for lossless mode
 }
 
 struct HeaderParameter {
-    t_d: u8,
-    t_a: u8,
+    c_s: u8,            // Scan component selector
+    t_d: u8,            // DC entropy coding table destination selector
+    t_a: u8,            // AC entropy coding table destination selector
 }
 
 struct SSSSTable {
-    t_c: u8,
-    t_h: u8,
+    t_c: u8,            // Table class – 0 = DC table or lossless table, 1 = AC table
+    t_h: u8,            // Huffman table destination identifier
     table: HashMap<u32, u8>,
-    min_code_length: usize,
-    max_code_length: usize,
+    min_code_length: usize,     // number of bits of shorted Huffman code
+    max_code_length: usize,     // number of bits of longest Huffman code
 }
 
-pub fn decode(encoded_image: Vec<u8>) {
+pub fn decode(encoded_image: Vec<u8>) -> Vec<u32> {
     is_jpeg(&encoded_image);
     let mut read_index: usize = 2;
     
     let mut frame_header: FrameHeader = FrameHeader {p_:0, x_:0, y_:0, components:HashMap::new()};
 
-    // let mut ssss_tables: Vec<SSSSTable> = Vec::with_capacity(2);
     let mut ssss_tables: HashMap<usize, SSSSTable> = HashMap::new();
+    let mut raw_image: Vec<u32> = Vec::new();
     while read_index < encoded_image.len() {
         let possible_marker: u16 = bytes_to_int_two(&encoded_image[read_index..read_index+2]);
         match possible_marker {
@@ -95,18 +99,38 @@ pub fn decode(encoded_image: Vec<u8>) {
                 read_index = header_info.1;
             },
             DHT => {
-                let (huffman_table, read_index) = get_huffman_info(&encoded_image, read_index);
-                // ssss_tables.push(huffman_table);
-                ssss_tables.insert(huffman_table.t_h as usize, huffman_table);
+                // let (huffman_table, read_index) = get_huffman_info(&encoded_image, read_index);
+                // ssss_tables.insert(huffman_table.t_h as usize, huffman_table);
+                let huffman_info = get_huffman_info(&encoded_image, read_index);
+
+                read_index = huffman_info.1;
+                ssss_tables.insert(huffman_info.0.t_h as usize, huffman_info.0);
             },
             SOS => {
-                let (scan_header, read_index) = parse_scan_header(&encoded_image, read_index);
-                decode_image(&encoded_image, &frame_header, scan_header, &ssss_tables, read_index);
+                let scan_header_info = parse_scan_header(&encoded_image, read_index);
+                let image_info = decode_image(&encoded_image, &frame_header, scan_header_info.0, 
+                    &ssss_tables, scan_header_info.1);
+
+                raw_image = image_info.0;
+                read_index = image_info.1;
             },
+            marker if APP <= marker && marker <= APPn => {
+                read_index = skip_app_marker(&encoded_image, read_index);
+            }
+            EOI => { break; }
             marker if marker > 0xFF00 && marker < 0xFFFF => panic!("Unimplimented marker!"),
             _ => { read_index += 1; },
         }
     }
+
+    raw_image
+}
+
+fn skip_app_marker(encoded_image: &Vec<u8>, mut read_index: usize) -> usize {
+    read_index += 2;
+    let _l_p = bytes_to_int_two(&encoded_image[read_index..=read_index + 1]);
+
+    read_index + _l_p as usize
 }
 
 fn get_huffman_info(encoded_image: &Vec<u8>, read_index: usize) -> (SSSSTable, usize) {
@@ -156,7 +180,11 @@ fn make_ssss_table(code_lengths: [[u8; 16]; 16]) -> (HashMap<u32, u8>, usize, us
     let mut code: u32 = 1;
     let mut table: HashMap<u32, u8> = HashMap::new();
     for index in 0..16 {
+        // the code lengths are stored in a HashMap that was initized with 0xFF,
+        // so if the first cell has 0xFF then there are now codes with a length
+        // equal to that row's index
         if code_lengths[index][0] < 0xFF_u8 {
+            // remove the cells that still have the initial value, 0xFF
             let values: Vec<u8> = code_lengths[index].into_iter().filter(|x| x < &0xFF_u8).collect::<Vec<u8>>();
             let mut values_w_n_bits: usize = 0;
             while values_w_n_bits <= values.len() {
@@ -215,10 +243,11 @@ fn parse_scan_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (ScanHea
     let n_s = encoded_image[read_index] as usize;
     read_index += 1;
     let mut head_params: HashMap<u8, HeaderParameter> = HashMap::new();
-    for _ in 0..n_s {
+    for c_s in 0..n_s {
         head_params.insert(
             encoded_image[read_index],
             HeaderParameter {
+                c_s: c_s as u8,
                 t_d: encoded_image[read_index + 1] >> 4,
                 t_a: encoded_image[read_index + 1] & 0xF,
             });
@@ -255,10 +284,11 @@ fn parse_frame_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (FrameH
     let n_f: usize = encoded_image[read_index] as usize;
     read_index += 1;
     let mut components: HashMap<u8, Component> = HashMap::new();
-    for _ in 0..n_f as usize {
+    for c_ in 0..n_f as usize {
         components.insert(
             encoded_image[read_index],
             Component {
+                c_: c_ as u8,
                 h_: encoded_image[read_index + 1] >> 4,
                 v_: encoded_image[read_index + 1] & 0xF,
                 t_q: encoded_image[read_index + 2],
@@ -287,8 +317,8 @@ fn bytes_to_int_two(bytes: &[u8]) -> u16 {
 }
 
 fn decode_image(encoded_image: &Vec<u8>, frame_header: &FrameHeader, scan_header: 
-    ScanHeader, ssss_tables: &HashMap<usize, SSSSTable>, read_index: usize) -> Vec<u32> {
-        
+    ScanHeader, ssss_tables: &HashMap<usize, SSSSTable>, read_index: usize) -> (Vec<u32>, usize) {
+
     let width = frame_header.x_ as usize;
     let height = frame_header.y_ as usize;
 
@@ -318,7 +348,7 @@ fn decode_image(encoded_image: &Vec<u8>, frame_header: &FrameHeader, scan_header
         raw_image.push(((p_x as i32 + pixel_delta) & ((1 << frame_header.p_) - 1)) as u32);
     }
 
-    raw_image
+    (raw_image, read_index)
 }
 
 fn  get_prediction(context: ContextContext, predictor: &u8) -> u32 {
@@ -458,6 +488,19 @@ mod tests {
         file.read_to_end(&mut encoded_image);
 
         encoded_image
+    }
+
+    #[test]
+    fn skip_app_marker_good() {
+        let mut path = env::current_dir().unwrap();
+        path.push("tests");
+        path.push("common");
+        path.push("lossy.jpg");
+        let path = path.as_path();
+        let encoded_image = get_file_as_byte_vec(path);
+
+        let read_index = skip_app_marker(&encoded_image, 2);
+        assert_eq!(read_index, 0x14);
     }
 
     #[test]
