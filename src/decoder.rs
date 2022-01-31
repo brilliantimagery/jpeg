@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+#[allow(dead_code)]
+
+use std::{collections::HashMap, collections::BTreeMap, ops::Neg};
+use std::slice::Iter;
 
 const SOF0: u16 = 0xFFC0;  // Baseline DCT
 const SOF3: u16 = 0xFFC3;  // Lossless Huffman Encoding
@@ -12,12 +15,12 @@ const DQT: u16 = 0xFFDB;  // Define quantization table(s)
 const APP: u16 = 0xFFE0;  //Reserved for application segments
 const APPn: u16 = 0xFFEF;  //Reserved for application segments
 
-// struct Context {
-//     r_a: u32,
-//     r_b: u32,
-//     r_c: u32,
-//     r_ix: u32,
-// }
+// // struct Context {
+// //     r_a: u32,
+// //     r_b: u32,
+// //     r_c: u32,
+// //     r_ix: u32,
+// // }
 
 struct ContextContext<'a> {
     component: &'a usize,
@@ -82,96 +85,102 @@ struct SSSSTable {
 }
 
 pub fn decode(encoded_image: Vec<u8>) -> Vec<u32> {
-    is_jpeg(&encoded_image);
-    let mut read_index: usize = 2;
+    Vec::from([0_u32])
+}
+
+// pub fn decode(encoded_image: Vec<u8>) -> Vec<u32> {
+//     let mut encoded_image = encoded_image.iter();
+//     encoded_image = is_jpeg(encoded_image);
     
-    let mut frame_header: FrameHeader = FrameHeader {p_:0, x_:0, y_:0, components:HashMap::new()};
+//     let mut frame_header: FrameHeader = FrameHeader {p_:0, x_:0, y_:0, components:HashMap::new()};
 
-    let mut ssss_tables: HashMap<usize, SSSSTable> = HashMap::new();
-    let mut raw_image: Vec<u32> = Vec::new();
-    while read_index < encoded_image.len() {
-        let possible_marker: u16 = bytes_to_int_two(&encoded_image[read_index..read_index+2]);
-        match possible_marker {
-            SOF3 => {
-                let header_info = parse_frame_header(&encoded_image, read_index); 
+//     let mut ssss_tables: HashMap<usize, SSSSTable> = HashMap::new();
+//     let mut raw_image: Vec<u32> = Vec::new();
+//     while encoded_image.len() > 0 {
+//     // while read_index < encoded_image.len() {
 
-                frame_header = header_info.0;
-                read_index = header_info.1;
-            },
-            DHT => {
-                // let (huffman_table, read_index) = get_huffman_info(&encoded_image, read_index);
-                // ssss_tables.insert(huffman_table.t_h as usize, huffman_table);
-                let huffman_info = get_huffman_info(&encoded_image, read_index);
+//         let possible_marker: u16 = bytes_to_int_two(encoded_image.next(), encoded_image.next());
+//         match possible_marker {
+//             SOF3 => {
+//                 let header_info = parse_frame_header(encoded_image); 
 
-                read_index = huffman_info.1;
-                ssss_tables.insert(huffman_info.0.t_h as usize, huffman_info.0);
-            },
-            SOS => {
-                let scan_header_info = parse_scan_header(&encoded_image, read_index);
-                let image_info = decode_image(&encoded_image, &frame_header, scan_header_info.0, 
-                    &ssss_tables, scan_header_info.1);
+//                 frame_header = header_info.0;
+//                 encoded_image = header_info.1;
+//             },
+//             DHT => {
+//                 // let (huffman_table, read_index) = get_huffman_info(&encoded_image, read_index);
+//                 // ssss_tables.insert(huffman_table.t_h as usize, huffman_table);
+//                 let huffman_info = get_huffman_info(encoded_image);
 
-                raw_image = image_info.0;
-                read_index = image_info.1;
-            },
-            marker if APP <= marker && marker <= APPn => {
-                read_index = skip_app_marker(&encoded_image, read_index);
-            }
-            EOI => { break; }
-            marker if marker > 0xFF00 && marker < 0xFFFF => panic!("Unimplimented marker!"),
-            _ => { read_index += 1; },
-        }
+//                 encoded_image = huffman_info.1;
+//                 ssss_tables.insert(huffman_info.0.t_h as usize, huffman_info.0);
+//             },
+//             SOS => {
+//                 let scan_header_info = parse_scan_header(&encoded_image, read_index);
+//                 let image_info = decode_image(&encoded_image, &frame_header, scan_header_info.0, 
+//                     &ssss_tables, scan_header_info.1);
+
+//                 raw_image = image_info.0;
+//                 read_index = image_info.1;
+//             },
+//             marker if APP <= marker && marker <= APPn => {
+//                 read_index = skip_app_marker(&encoded_image, read_index);
+//             }
+//             EOI => { break; }
+//             marker if marker > 0xFF00 && marker < 0xFFFF => panic!("Unimplimented marker!"),
+//             _ => { read_index += 1; },
+//         }
+//     }
+
+//     raw_image
+// }
+
+fn skip_app_marker(mut encoded_image: Iter<u8>) -> Iter<u8> {
+    let _l_p = bytes_to_int_two(encoded_image.next(), encoded_image.next());
+
+    // TODO: this is ugly should should use skip or something
+
+    for _ in 0.._l_p {
+        encoded_image.next();
     }
 
-    raw_image
+    encoded_image
 }
 
-fn skip_app_marker(encoded_image: &Vec<u8>, mut read_index: usize) -> usize {
-    read_index += 2;
-    let _l_p = bytes_to_int_two(&encoded_image[read_index..=read_index + 1]);
+// fn get_huffman_info(encoded_image: Iter<u8>) -> (SSSSTable, Iterator<u8>) {
+//     let (t_c, t_h, code_lengths, encoded_image) = parse_huffman_info(encoded_image);
 
-    read_index + _l_p as usize
-}
+//     let (table, min_code_length, max_code_length) = make_ssss_table(code_lengths);
 
-fn get_huffman_info(encoded_image: &Vec<u8>, read_index: usize) -> (SSSSTable, usize) {
-    let (t_c, t_h, code_lengths, read_index) = parse_huffman_info(&encoded_image, read_index);
+//     (SSSSTable {
+//         t_c,
+//         t_h,
+//         table,
+//         min_code_length,
+//         max_code_length,
+//     }, encoded_image)
+// }
 
-    let (table, min_code_length, max_code_length) = make_ssss_table(code_lengths);
-
-    (SSSSTable {
-        t_c,
-        t_h,
-        table,
-        min_code_length,
-        max_code_length,
-    }, read_index)
-}
-
-fn parse_huffman_info(encoded_image: &Vec<u8>, mut read_index: usize) -> (u8, u8, [[u8; 16]; 16], usize) {
-    read_index += 2;
-    let _l_h = bytes_to_int_two(&encoded_image[read_index..=read_index + 1]);
-    read_index += 2;
-    let t_c = encoded_image[read_index] >> 4;
-    let t_h = encoded_image[read_index] & 0xF;
-    read_index += 1;
-    let mut vij_index = read_index + 16;
+fn parse_huffman_info(mut encoded_image: Iter<u8>) -> (u8, u8, [[u8; 16]; 16], Iter<u8>) {
+    let _l_h = bytes_to_int_two(encoded_image.next(), encoded_image.next());
+    let t_c_h = encoded_image.next().unwrap();
+    let t_c = t_c_h >> 4;
+    let t_h = t_c_h & 0xF;
     let mut code_lengths = [[0xFF_u8; 16]; 16];
+    let mut lengths: BTreeMap<u8, u8> = BTreeMap::new();
     for code_length_index in 0..16 {
-        let l_i: u8 = encoded_image[read_index + code_length_index];
+        let l_i: u8 = *encoded_image.next().unwrap();
         if l_i > 0 {
-            let mut n_codes: usize = 0;
-            for _ in 0..l_i {
-                code_lengths[code_length_index][0];
-                code_lengths[0][n_codes];
-                encoded_image[vij_index];
-                code_lengths[code_length_index][n_codes] = encoded_image[vij_index];
-                n_codes += 1;
-                vij_index += 1;
-            }
+            lengths.insert(code_length_index, l_i);
+        }
+    }
+    for (code_length_index, l_i) in lengths.iter() {
+        for i in 0..*l_i {
+            code_lengths[*code_length_index as usize][i as usize] = *encoded_image.next().unwrap();
         }
     }
 
-    (t_c, t_h, code_lengths, vij_index)
+    (t_c, t_h, code_lengths, encoded_image)
 }
 
 fn make_ssss_table(code_lengths: [[u8; 16]; 16]) -> (HashMap<u32, u8>, usize, usize) {
@@ -236,30 +245,26 @@ fn number_of_used_bits(numb: &u32) -> usize {
     n_bits
 }
 
-fn parse_scan_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (ScanHeader, usize) {
-    read_index += 2;
-    let _l_s = bytes_to_int_two(&encoded_image[read_index..read_index + 2]);
-    read_index += 2;
-    let n_s = encoded_image[read_index] as usize;
-    read_index += 1;
+fn parse_scan_header(mut encoded_image: Iter<u8>) -> (ScanHeader, Iter<u8>) {
+    let _l_s = bytes_to_int_two(encoded_image.next(), encoded_image.next());
+    let n_s = *encoded_image.next().unwrap() as usize;
     let mut head_params: HashMap<u8, HeaderParameter> = HashMap::new();
-    for c_s in 0..n_s {
+    for _ in 0..n_s {
+        let c_s = *encoded_image.next().unwrap();
+        let t_d_a = *encoded_image.next().unwrap();
         head_params.insert(
-            encoded_image[read_index],
+            c_s,
             HeaderParameter {
-                c_s: c_s as u8,
-                t_d: encoded_image[read_index + 1] >> 4,
-                t_a: encoded_image[read_index + 1] & 0xF,
+                c_s,
+                t_d: t_d_a >> 4,
+                t_a: t_d_a & 0xF,
             });
-        read_index += 2;
     }
-    let s_s = encoded_image[read_index];
-    read_index += 1;
-    let s_e = encoded_image[read_index];
-    read_index += 1;
-    let a_h = encoded_image[read_index] >> 4;
-    let a_l = encoded_image[read_index] & 0xF;
-    read_index += 1;
+    let s_s = *encoded_image.next().unwrap();
+    let s_e = *encoded_image.next().unwrap();
+    let a_h_l = *encoded_image.next().unwrap();
+    let a_h = a_h_l >> 4;
+    let a_l = a_h_l & 0xF;
 
     (ScanHeader {
         head_params,
@@ -268,32 +273,28 @@ fn parse_scan_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (ScanHea
         a_h,
         a_l,
     },
-    read_index)
+    encoded_image)
 }
 
-fn parse_frame_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (FrameHeader, usize) {
-    read_index += 2;
-    let _l_f: u16 = bytes_to_int_two(&encoded_image[read_index..read_index + 2]);
-    read_index += 2;
-    let p_: u8 = encoded_image[read_index];
-    read_index += 1;
-    let y_: u16 = bytes_to_int_two(&encoded_image[read_index..read_index + 2]);
-    read_index += 2;
-    let x_: u16 = bytes_to_int_two(&encoded_image[read_index..read_index + 2]);
-    read_index += 2;
-    let n_f: usize = encoded_image[read_index] as usize;
-    read_index += 1;
+fn parse_frame_header(mut encoded_image: Iter<u8>) -> (FrameHeader, Iter<u8>) {
+    let _l_f: u16 = bytes_to_int_two(encoded_image.next(), encoded_image.next());
+    let p_: u8 = *encoded_image.next().unwrap();
+    let y_: u16 = bytes_to_int_two(encoded_image.next(), encoded_image.next());
+    let x_: u16 = bytes_to_int_two(encoded_image.next(), encoded_image.next());
+    let n_f = *encoded_image.next().unwrap() as usize;
     let mut components: HashMap<u8, Component> = HashMap::new();
-    for c_ in 0..n_f as usize {
+    for _ in 0..n_f as usize {
+        let c_: u8 = *encoded_image.next().unwrap();
+        let h_v: u8 = *encoded_image.next().unwrap();
+        let t_q: u8 = *encoded_image.next().unwrap();
         components.insert(
-            encoded_image[read_index],
+            c_,
             Component {
-                c_: c_ as u8,
-                h_: encoded_image[read_index + 1] >> 4,
-                v_: encoded_image[read_index + 1] & 0xF,
-                t_q: encoded_image[read_index + 2],
+                c_,
+                h_: h_v >> 4,
+                v_: h_v & 0xF,
+                t_q
             });
-        read_index += 3
     }
 
     (FrameHeader {
@@ -302,110 +303,115 @@ fn parse_frame_header(encoded_image: &Vec<u8>, mut read_index: usize) -> (FrameH
         x_,
         components,
     },
-    read_index)
+    encoded_image)
 }
 
-fn is_jpeg(encoded_image: &Vec<u8>) -> bool {
-    if bytes_to_int_two(&encoded_image[..2]) != SOI {
+fn is_jpeg(mut encoded_image: Iter<u8>) -> Iter<u8> {
+    if bytes_to_int_two(encoded_image.next(), encoded_image.next()) != SOI {
         panic!("This doesn't seem to be a JPEG.");
     }
-    true
+    encoded_image
 }
 
-fn bytes_to_int_two(bytes: &[u8]) -> u16 {
-    (bytes[0] as u16) << 8 | bytes[1] as u16
+fn bytes_to_int_two(mut byte_0: Option<&u8>, mut byte_1: Option<&u8>) -> u16 {
+    (*byte_0.unwrap() as u16) << 8 | *byte_1.unwrap() as u16
 }
 
-fn decode_image(encoded_image: &Vec<u8>, frame_header: &FrameHeader, scan_header: 
-    ScanHeader, ssss_tables: &HashMap<usize, SSSSTable>, read_index: usize) -> (Vec<u32>, usize) {
+// fn decode_image(encoded_image: &Vec<u8>, frame_header: &FrameHeader, scan_header: 
+//     ScanHeader, ssss_tables: &HashMap<usize, SSSSTable>, read_index: usize) -> (Vec<u32>, usize) {
 
-    let width = frame_header.x_ as usize;
-    let height = frame_header.y_ as usize;
+//     let width = frame_header.x_ as usize;
+//     let height = frame_header.y_ as usize;
 
-    // panic!("placeholder mumbo jumbo");
-    let numb_of_components = frame_header.components.len();
-    let mut raw_image: Vec<u32> = Vec::with_capacity(width * height * numb_of_components);
-    let image_start_index = read_index;
+//     // panic!("placeholder mumbo jumbo");
+//     let numb_of_components = frame_header.components.len();
+//     let mut raw_image: Vec<u32> = Vec::with_capacity(width * height * numb_of_components);
+//     let image_start_index = read_index;
 
-    let (image_bits, read_index) = get_image_data_without_stuffed_zero_bytes(&encoded_image, read_index);
-    let bit_read_index: usize = 0;
+//     let (image_bits, read_index) = get_image_data_without_stuffed_zero_bytes(&encoded_image, read_index);
+//     let bit_read_index: usize = 0;
 
-    while bit_read_index < image_bits.len() {
-        let image_index = read_index - image_start_index;
-        let component = image_index % numb_of_components;
-        let context = ContextContext {
-            component: &component,
-            x_position: (image_index / numb_of_components) % width,
-            y_position: (image_index / numb_of_components) / width,
-            width: &width,
-            numb_of_components: &&numb_of_components,
-            point_tranform: &scan_header.a_h, 
-            p_: &frame_header.p_, 
-            img: &raw_image,
-        };
-        let p_x = get_prediction(context, &scan_header.s_s);
-        let (pixel_delta, bit_read_index) = get_huffmaned_value(ssss_tables.get(&component).unwrap(), &image_bits, bit_read_index);
-        raw_image.push(((p_x as i32 + pixel_delta) & ((1 << frame_header.p_) - 1)) as u32);
-    }
+//     while bit_read_index < image_bits.len() {
+//         let image_index = read_index - image_start_index;
+//         let component = image_index % numb_of_components;
+//         let context = ContextContext {
+//             component: &component,
+//             x_position: (image_index / numb_of_components) % width,
+//             y_position: (image_index / numb_of_components) / width,
+//             width: &width,
+//             numb_of_components: &&numb_of_components,
+//             point_tranform: &scan_header.a_h, 
+//             p_: &frame_header.p_, 
+//             img: &raw_image,
+//         };
+//         let p_x = get_prediction(context, &scan_header.s_s);
+//         let (pixel_delta, bit_read_index) = get_huffmaned_value(ssss_tables.get(&component).unwrap(), &image_bits, bit_read_index);
+//         raw_image.push(((p_x as i32 + pixel_delta) & ((1 << frame_header.p_) - 1)) as u32);
+//     }
 
-    (raw_image, read_index)
-}
+//     (raw_image, read_index)
+// }
 
-fn  get_prediction(context: ContextContext, predictor: &u8) -> u32 {
-    let mut used_predictor: u8 = *predictor;
+// fn  get_prediction(context: ContextContext, predictor: &u8) -> u32 {
+//     let mut used_predictor: u8 = *predictor;
 
-    if context.x_position == 0 {
-        if context.y_position == 0 {
-            used_predictor = 8;
-        } else {
-            used_predictor = 2;
-        }
-    } else if context.y_position == 0 {
-        used_predictor = 1;        
-    }
+//     if context.x_position == 0 {
+//         if context.y_position == 0 {
+//             used_predictor = 8;
+//         } else {
+//             used_predictor = 2;
+//         }
+//     } else if context.y_position == 0 {
+//         used_predictor = 1;        
+//     }
 
-    match used_predictor {
-        0 => 0,
-        1 => context.r_a(),
-        2 => context.r_b(),
-        3 => context.r_c(),
-        4 => { context.r_a() + context.r_b() - context.r_c() },
-        5 => context.r_a() + ((context.r_b() - context.r_c()) >> 1),
-        6 => context.r_b() + ((context.r_a() - context.r_c()) >> 1),
-        7 => (context.r_a() + context.r_b()) / 2,
-        8 => context.r_ix(),
-        _ => 0
-    }
-}
+//     match used_predictor {
+//         0 => 0,
+//         1 => context.r_a(),
+//         2 => context.r_b(),
+//         3 => context.r_c(),
+//         4 => { context.r_a() + context.r_b() - context.r_c() },
+//         5 => context.r_a() + ((context.r_b() - context.r_c()) >> 1),
+//         6 => context.r_b() + ((context.r_a() - context.r_c()) >> 1),
+//         7 => (context.r_a() + context.r_b()) / 2,
+//         8 => context.r_ix(),
+//         _ => 0
+//     }
+// }
 
-fn get_image_data_without_stuffed_zero_bytes(encoded_image: &Vec<u8>, mut read_index: usize) -> (Vec<u8>, usize) {
+fn get_image_data_without_stuffed_zero_bytes(mut encoded_image: Iter<u8>) -> (Vec<u8>, Iter<u8>) {
     // See JPG document 10918-1 P33 B.1.1.5 Note 2
     let mut image_data: Vec<u8> = Vec::with_capacity(encoded_image.len());
-    let mut write_index: usize = 0;
+    // let mut write_index: usize = 0;
+    // let encoded_image: Vec<u8> = Vec::from([0x00, 0xFE, 0x00, 0xFF, 0x00, 0x05, 0xFF, 0xDA]);
+    // let expected_bits: Vec<u8> = Vec::from([1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
+
+    let mut this_byte = *encoded_image.next().unwrap();
+    let mut next_byte = *encoded_image.next().unwrap();
 
     loop {
-        if encoded_image[read_index] < 0xFF {
+        if this_byte < 0xFF {
             // if the current element is less then 0xFF the proceide as usual
-            image_data.push(encoded_image[read_index]);
-            read_index += 1;
-            write_index += 1;
-        } else if encoded_image[read_index + 1] == 0 {
+            image_data.push(this_byte);
+            this_byte = next_byte;
+            next_byte = *encoded_image.next().unwrap();
+        } else if next_byte == 0 {
             // given that the current element is 0xFF
             // if the next element is zero then
             // this element should be read and the next is a "zero byte"
             // which was added to avoid confusion with markers and should be discarded
-            image_data.push(encoded_image[read_index]);
-            read_index += 2;
-            write_index += 1;
+            image_data.push(this_byte);
+            this_byte = *encoded_image.next().unwrap();
+            next_byte = *encoded_image.next().unwrap();
         } else {
             // Hit the end of the section
             break;
         }
     }
 
-    let mut bits: Vec<u8> = Vec::with_capacity(write_index * 8);
+    let mut bits: Vec<u8> = Vec::with_capacity(image_data.len() * 8);
 
-    for i in 0..write_index {
+    for i in 0..image_data.len() {
         bits.push((image_data[i] >> 7) & 1);
         bits.push((image_data[i] >> 6) & 1);
         bits.push((image_data[i] >> 5) & 1);
@@ -416,7 +422,7 @@ fn get_image_data_without_stuffed_zero_bytes(encoded_image: &Vec<u8>, mut read_i
         bits.push((image_data[i] >> 0) & 1);
     }
 
-    (bits, read_index)
+    (bits, encoded_image)
 }
 
 fn get_huffmaned_value(ssss_table: &SSSSTable, image_bits: &Vec<u8>, mut bit_read_index: usize) -> (i32, usize) {
@@ -477,17 +483,24 @@ mod tests {
     use std::fs::File;
     use std::io::Read;
     use std::path::Path;
-    use test::Bencher;
+    // use test::Bencher;
 
     use super::*;
 
-    fn get_file_as_byte_vec(path: &Path) -> Vec<u8> {
+    fn get_file_as_byte_iter(path: &Path) -> Vec<u8> {
         
         let mut file = File::open(path).expect("The test file wasn't where it was expected.");
         let mut encoded_image = Vec::from([]);
         file.read_to_end(&mut encoded_image);
 
         encoded_image
+
+        // let mut e_i: Vec<u8> = Vec::with_capacity(encoded_image.len());
+        // for i in 0..encoded_image.len() {
+        //     e_i[i] = encoded_image[i];
+        // }
+
+        // e_i.iter()
     }
 
     #[test]
@@ -495,12 +508,25 @@ mod tests {
         let mut path = env::current_dir().unwrap();
         path.push("tests");
         path.push("common");
-        path.push("lossy.jpg");
+        path.push("F-18.ljpg");
         let path = path.as_path();
-        let encoded_image = get_file_as_byte_vec(path);
+        let encoded_image = get_file_as_byte_iter(path);
+        // let mut file = File::open(path).expect("The test file wasn't where it was expected.");
+        // let mut encoded_image = Vec::from([]);
+        // file.read_to_end(&mut encoded_image);
 
-        let read_index = skip_app_marker(&encoded_image, 2);
-        assert_eq!(read_index, 0x14);
+        let mut e_i: Vec<u8> = Vec::with_capacity(encoded_image.len());
+        for i in 0..encoded_image.len() {
+            e_i.push(encoded_image[i]);
+        }
+
+        let mut encoded_image = e_i.iter();
+        for _ in 0..0x2 {
+            encoded_image.next();
+        }
+
+        let encoded_image = skip_app_marker(encoded_image);
+        assert_eq!(encoded_image.len(), 42281);
     }
 
     #[test]
@@ -614,35 +640,38 @@ mod tests {
         let (_pixel_diff, _bit_read_index) = get_huffmaned_value(&ssss_table, &image_bits, 1);
     }
 
-    // fn get_ContextContext<'a>() -> ContextContext + 'a {
-    //     let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
-    //     let components: usize = 2;
-    //     let width: usize = 4;
-    //     let image_index: usize = 11;
-    //     let Ah: u8 = 2;
-    //     let P: u8 = 8;
+//     // fn get_ContextContext<'a>() -> ContextContext + 'a {
+//     //     let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
+//     //     let components: usize = 2;
+//     //     let width: usize = 4;
+//     //     let image_index: usize = 11;
+//     //     let Ah: u8 = 2;
+//     //     let P: u8 = 8;
 
-    //     ContextContext {
-    //         component: image_index % components,
-    //         x: (image_index / components) % width,
-    //         y: (image_index / components) / width,
-    //         width: &width,
-    //         point_tranform: &Ah, 
-    //         P: &P,
-    //         img: &img,
-    //     }
-    // }
+//     //     ContextContext {
+//     //         component: image_index % components,
+//     //         x: (image_index / components) % width,
+//     //         y: (image_index / components) / width,
+//     //         width: &width,
+//     //         point_tranform: &Ah, 
+//     //         P: &P,
+//     //         img: &img,
+//     //     }
+//     // }
 
     #[test]
     fn get_image_data_without_stuffed_zero_bytes_good() {
         let encoded_image: Vec<u8> = Vec::from([0x00, 0xFE, 0x00, 0xFF, 0x00, 0x05, 0xFF, 0xDA]);
         let expected_bits: Vec<u8> = Vec::from([1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
-        let read_index: usize = 1;
+        // let read_index: usize = 1;
 
-        let (actual_bits, read_index) = get_image_data_without_stuffed_zero_bytes(&encoded_image, read_index);
+        let mut encoded_image = encoded_image.iter();
+        encoded_image.next();
+
+        let (mut actual_bits, encoded_image) = get_image_data_without_stuffed_zero_bytes(encoded_image);
 
         assert_eq!(actual_bits, expected_bits);
-        assert_eq!(read_index, 6);
+        assert_eq!(actual_bits.len(), 32);
     }
 
     #[test]
@@ -764,9 +793,22 @@ mod tests {
         path.push("common");
         path.push("F-18.ljpg");
         let path = path.as_path();
-        let encoded_image = get_file_as_byte_vec(path);
+        let encoded_image = get_file_as_byte_iter(path);
+        // let mut file = File::open(path).expect("The test file wasn't where it was expected.");
+        // let mut encoded_image = Vec::from([]);
+        // file.read_to_end(&mut encoded_image);
 
-        let (scan_header, read_index) = parse_scan_header(&encoded_image, 0x70);
+        let mut e_i: Vec<u8> = Vec::with_capacity(encoded_image.len());
+        for i in 0..encoded_image.len() {
+            e_i.push(encoded_image[i]);
+        }
+
+        let mut encoded_image = e_i.iter();
+        for _ in 0..0x72 {
+            encoded_image.next();
+        }
+
+        let (scan_header, encoded_image) = parse_scan_header(encoded_image);
 
         assert_eq!(scan_header.head_params.len(), 3);
         assert_eq!(scan_header.head_params.get(&0).unwrap().t_d, 0);
@@ -779,7 +821,7 @@ mod tests {
         assert_eq!(scan_header.s_e, 0x00);
         assert_eq!(scan_header.a_h, 0x00);
         assert_eq!(scan_header.a_l, 0x00);
-        assert_eq!(read_index, 0x7E);
+        assert_eq!(encoded_image.len(), 107634);
     }
 
     #[test]
@@ -789,10 +831,23 @@ mod tests {
         path.push("common");
         path.push("F-18.ljpg");
         let path = path.as_path();
-        let encoded_image = get_file_as_byte_vec(path);
+        let encoded_image = get_file_as_byte_iter(path);
+        // let mut file = File::open(path).expect("The test file wasn't where it was expected.");
+        // let mut encoded_image = Vec::from([]);
+        // file.read_to_end(&mut encoded_image);
 
-        let read_index = 0x15;
-        let (t_c, t_h, code_lengths, read_index) = parse_huffman_info(&encoded_image, read_index);
+        let mut e_i: Vec<u8> = Vec::with_capacity(encoded_image.len());
+        for i in 0..encoded_image.len() {
+            e_i.push(encoded_image[i]);
+        }
+
+        let mut encoded_image = e_i.iter();
+        for _ in 0..0x17 {
+            encoded_image.next();
+        }
+
+        // let read_index = 0x15;
+        let (t_c, t_h, code_lengths, encoded_image) = parse_huffman_info(encoded_image);
 
         let expected = [[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
@@ -814,7 +869,7 @@ mod tests {
         assert_eq!(code_lengths, expected);
         assert_eq!(t_c, 0);
         assert_eq!(t_h, 0);
-        assert_eq!(read_index, 0x33)
+        assert_eq!(encoded_image.len(), 107709)
     }
 
     #[test]
@@ -845,27 +900,27 @@ mod tests {
         assert_eq!(max_code_length, 8);
     }
 
-    #[bench]
-    fn make_ssss_tables_bench(b: &mut Bencher) {
-        let code_lengths = [[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]];
+//     #[bench]
+//     fn make_ssss_tables_bench(b: &mut Bencher) {
+//         let code_lengths = [[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]];
 
-        b.iter(|| make_ssss_table(code_lengths));            
-    }
+//         b.iter(|| make_ssss_table(code_lengths));            
+//     }
 
     #[test]
     fn parse_frame_header_good() {
@@ -874,9 +929,22 @@ mod tests {
         path.push("common");
         path.push("F-18.ljpg");
         let path = path.as_path();
-        let encoded_image = get_file_as_byte_vec(path);
+        let encoded_image = get_file_as_byte_iter(path);
+        // let mut file = File::open(path).expect("The test file wasn't where it was expected.");
+        // let mut encoded_image = Vec::from([]);
+        // file.read_to_end(&mut encoded_image);
 
-        let (frame_header, read_index) = parse_frame_header(&encoded_image, 2);
+        let mut e_i: Vec<u8> = Vec::with_capacity(encoded_image.len());
+        for i in 0..encoded_image.len() {
+            e_i.push(encoded_image[i]);
+        }
+
+        let mut encoded_image = e_i.iter();
+        for _ in 0..4 {
+            encoded_image.next();
+        }
+
+        let (frame_header, encoded_image) = parse_frame_header(encoded_image);
 
         assert_eq!(frame_header.p_, 0x08);
         assert_eq!(frame_header.y_, 0x00F0);
@@ -891,7 +959,7 @@ mod tests {
         assert_eq!(frame_header.components.get(&2).unwrap().h_, 1);
         assert_eq!(frame_header.components.get(&2).unwrap().v_, 1);
         assert_eq!(frame_header.components.get(&2).unwrap().t_q, 0);
-        assert_eq!(read_index, 21);
+        assert_eq!(encoded_image.len(), 107739);
     }
 
     #[test]
@@ -928,132 +996,140 @@ mod tests {
     #[test]
     fn is_jpg_true() {
         let encoded_image = Vec::from([0xFF, 0xD8, 0x08]);
+        let encoded_image = encoded_image.iter();
 
-        assert!(is_jpeg(&encoded_image));
+
+        let expected = Vec::from([0x08_u8]);
+        let mut expected = expected.iter();
+
+        assert_eq!(is_jpeg(encoded_image).next(), expected.next());
     }
 
     #[test]
     #[should_panic(expected = "This doesn't seem to be a JPEG.")]
     fn is_jpg_false() {
         let encoded_image = Vec::from([0xFF, 0xC4, 0x08]);
+        let encoded_image = encoded_image.iter();
 
-        is_jpeg(&encoded_image);
+        is_jpeg(encoded_image);
     }
 
     #[test]
     fn bytes_to_int_two_good() {
-        let buffer = Vec::from([0xC2, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
-        let expected = 7565_u16;
-        assert_eq!(bytes_to_int_two(&buffer[1..3]), expected);
+        let buffer = Vec::from([0xC2_u8, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
+        let mut buffer = buffer.iter();
+        let expected: u16 = 0xC21D_u16;
+        assert_eq!(bytes_to_int_two(buffer.next(), buffer.next()), expected);
     }
 
     #[test]
     fn bytes_to_int_two_fail() {
-        let buffer = Vec::from([0xC2, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
+        let buffer = Vec::from([0xC2_u8, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
+        let mut buffer = buffer.iter();
         let expected = 7564_u16;
-        assert_ne!(bytes_to_int_two(&buffer[1..3]), expected);
+        assert_ne!(bytes_to_int_two(buffer.next(), buffer.next()), expected);
     }
 }
 
 
 
-// let mut all_code_lengths: Vec<[[u8; 16]; 16]> = Vec::new();
-// all_code_lengths.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
-// all_code_lengths.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [9, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
-// all_code_lengths.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
+// // let mut all_code_lengths: Vec<[[u8; 16]; 16]> = Vec::new();
+// // all_code_lengths.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
+// // all_code_lengths.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [9, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
+// // all_code_lengths.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
 
 
-// let mut expected: Vec<[[u8; 16]; 16]> = Vec::new();
-// expected.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
-// expected.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [9, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
-// expected.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
+// // let mut expected: Vec<[[u8; 16]; 16]> = Vec::new();
+// // expected.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
+// // expected.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [9, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
+// // expected.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
