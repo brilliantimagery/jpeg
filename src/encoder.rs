@@ -1,3 +1,8 @@
+// https://www.youtube.com/watch?v=Kv1Hiv3ox8I
+//https://www.ece.ucdavis.edu/cerl/reliablejpeg/compression/
+
+use std::f64::consts::PI;
+
 const SOF0: u16 = 0xFFC0;  // Baseline DCT
 const SOF3: u16 = 0xFFC3;  // Lossless Huffman Encoding
 
@@ -20,18 +25,15 @@ pub struct JPEGEncoder {
 
 impl JPEGEncoder {
     pub fn from_rgb(raw_image: Vec<u8>, width: usize, height: usize, format: String) {
+        let p_ = 8_u8;
+
         let raw_image = rgb_to_ycbcr(raw_image);
         let ((y, cb, cr), width, height) = reshape_and_split_channels(raw_image, width, height);
-    
-        // let image = JPEGEncoder {
-        //     y: break_into_8x8(raw_image[0], width, height),
-        //     cb: break_into_8x8(raw_image[1], width, height),
-        //     cr: break_into_8x8(raw_image[2], width, height),
-        //     width,
-        //     height,
-        // };
-
-        // image
+        let y = break_into_8x8_blocks(y, width, height);
+        let cb = break_into_8x8_blocks(cb, width, height);
+        let cr = break_into_8x8_blocks(cr, width, height);
+        let cb = level_shift(cb, p_);
+        let cr = level_shift(cr, p_);        
     }
 
     pub fn save(&self, file: String) {
@@ -47,20 +49,90 @@ impl JPEGEncoder {
 //     ()
 // }
 
-fn break_into_8x8(raw_image: Vec<u8>, width: usize, height: usize) -> Vec<Vec<u8>> {
+fn fdct(block: &Vec<i8>, tqi: u8) {
+    // Svu = DCT coefficient at horizontal frequency u, vertical frequency v
+
+    // quantization_table = [[16, 11, 10, 16, 24, 40, 51, 61],
+    //                       [12, 12, 14, 19, 26, 58, 60, 55],
+    //                       [14, 13, 16, 24, 40, 57, 69]]
+    // page 143
+    // let lumiance_qt = [[16.0, 11.0, 10.0, 16.0, 24.0, 40.0, 51.0, 61.0],
+    //                                [12.0, 12.0, 14.0, 19.0, 26.0, 58.0, 60.0, 55.0],
+    //                                [14.0, 13.0, 16.0, 24.0, 40.0, 57.0, 69.0, 56.0],
+    //                                [14.0, 17.0, 22.0, 29.0, 51.0, 87.0, 80.0, 62.0],
+    //                                [18.0, 22.0, 37.0, 56.0, 68.0, 109.0, 103.0, 77.0],
+    //                                [24.0, 35.0, 55.0, 64.0, 81.0, 104.0, 113.0, 92.0],
+    //                                [49.0, 64.0, 78.0, 87.0, 103.0, 121.0, 120.0, 101.0],
+    //                                [72.0, 92.0, 95.0, 98.0, 112.0, 100.0, 103.0, 99.0],];
+
+    // let crominance_qt = [[17.0, 18.0, 24.0, 47.0, 99.0, 99.0, 99.0, 99.0],
+    //                                  [18.0, 21.0, 26.0, 66.0, 99.0, 99.0, 99.0, 99.0],
+    //                                  [24.0, 26.0, 56.0, 99.0, 99.0, 99.0, 99.0, 99.0],
+    //                                  [47.0, 66.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0],
+    //                                  [99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0],
+    //                                  [99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0],
+    //                                  [99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0],
+    //                                  [99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0],];
+
+    let lumiance_qt = Vec::from([16.0, 11.0, 10.0, 16.0, 24.0, 40.0, 51.0, 61.0, 12.0, 12.0, 14.0, 19.0, 26.0, 58.0, 60.0, 55.0, 14.0, 13.0, 16.0, 24.0, 40.0, 57.0, 69.0, 56.0, 14.0, 17.0, 22.0, 29.0, 51.0, 87.0, 80.0, 62.0, 18.0, 22.0, 37.0, 56.0, 68.0, 109.0, 103.0, 77.0, 24.0, 35.0, 55.0, 64.0, 81.0, 104.0, 113.0, 92.0, 49.0, 64.0, 78.0, 87.0, 103.0, 121.0, 120.0, 101.0, 72.0, 92.0, 95.0, 98.0, 112.0, 100.0, 103.0, 99.0]);
+  
+    let crominance_qt = Vec::from([17.0, 18.0, 24.0, 47.0, 99.0, 99.0, 99.0, 99.0, 18.0, 21.0, 26.0, 66.0, 99.0, 99.0, 99.0, 99.0, 24.0, 26.0, 56.0, 99.0, 99.0, 99.0, 99.0, 99.0, 47.0, 66.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0, 99.0]);
+                                     
+
+    let mut dct_coeffs: Vec<f64> = Vec::with_capacity(64);
+
+    for vu in 0..64 {
+        let u = (vu % 8) as f64;
+        let v = (vu / 8) as f64;
+        let cu = if u == 0.0 { 1.0 / 2.0_f64.sqrt() } else { 1.0 };
+        let cv = if u == 0.0 { 1.0 / 2.0_f64.sqrt() } else { 1.0 };
+        let mut block_sum = 0.0;
+        for sample in block.iter() {
+            let mut outer_sum = 0.0;
+            for x in 0..8 {
+                let mut inner_sum = 0.0;
+                for y in 0..8 {
+                    inner_sum += *sample as f64 * ((2 * x + 1) as f64 * u * PI / 16.0).cos() * ((2 * y + 1) as f64 * v * PI / 16.0).cos()
+                }
+                outer_sum += inner_sum;
+            }
+            block_sum += 1.0 / 4.0 * cu * cv * outer_sum;
+        }
+        dct_coeffs.push(block_sum);        
+    }
+
+    let table = if tqi == 1 {
+        lumiance_qt
+    } else {
+        crominance_qt
+    };
+
+    let sqvu: Vec<f64> = dct_coeffs.iter().zip(table.iter()).map(|(s, q)| (s / q).round()).collect();
+
+
+
+}
+
+fn level_shift(channel: Vec<Vec<u8>>, p_: u8) -> Vec<Vec<i8>> {
+    let shift = 2_i16.pow(p_ as u32- 1);
+    let channel: Vec<Vec<i8>> = channel.iter().map(|i| i.iter().map(|i| (*i as i16 - shift) as i8).collect()).collect();
+
+    channel
+}
+
+fn break_into_8x8_blocks(raw_image: Vec<u8>, width: usize, height: usize) -> Vec<Vec<u8>> {
     let mut image: Vec<Vec<u8>> = Vec::with_capacity((width / 8) * (height * 8));
 
-    for i in 0..((width / 8) * (height * 8)) {
+    for _ in 0..(width / 8) * (height / 8) {
         image.push(Vec::with_capacity(8 * 8));
     }
 
-    let tiles_wide = width / 8;
-    for i in 0..raw_image.len() {
-        let pos_in_tile = i % 8;
-        let tile_in_row = i / 8;
-        let tile_row_in_column = i / (width * 8);
+    let blocks_wide = width / 8;
+    for (i, val) in raw_image.iter().enumerate() {
+        let block_in_row = (i % width) / 8;
+        let block_row_in_column = i / width / 8;
 
-        image[tile_row_in_column * tiles_wide + tile_in_row].push(raw_image[i]);
+        image[block_row_in_column * blocks_wide + block_in_row].push(*val);
     }
 
     image
@@ -109,6 +181,10 @@ fn rgb_to_ycbcr(image: Vec<u8>) -> Vec<u8> {
         let g = image[i * 3 + 1] as f32 / 255.0;
         let b = image[i * 3 + 2] as f32 / 255.0;
 
+        // let y = 0.299 * r + 0.587 * g + 0.114 * b;
+        // let cb = 128.0 - 0.1687 * r - 0.3313 * g + 0.5 * b;
+        // let cr = 128.0 + 0.5 * r - 0.4187 * g - 0.0813 * b;
+
         let y = 16.0 + 65.481 * r + 128.553 * g + 24.966 * b;
         let cb = 128.0 - 37.797 * r - 74.203 * g + 112.0 * b;
         let cr = 128.0 + 112.0 * r - 93.786 * g - 18.214 * b;
@@ -151,7 +227,7 @@ mod tests {
     #[test]
     fn reshape_and_split_channels_good() {
         let input_image = input_image_34x34();
-        let expected_y: Vec<u8> = input_image_34x34_y();
+        let expected_y = input_image_34x34_y();
         let expected_cb = input_image_34x34_cb();
         let expected_cr = input_image_34x34_cr();
 
@@ -162,6 +238,46 @@ mod tests {
         assert_eq!(cr, expected_cr);
         assert_eq!(width, 32);
         assert_eq!(height, 32);
+    }
+
+    #[test]
+    fn break_into_8x8_good() {
+        let cb = input_image_34x34_cb();
+        let actual_cb = break_into_8x8_blocks(cb, 16, 16);
+        let expected_cb = split_input_image_34x34_cb();
+
+        assert_eq!(actual_cb, expected_cb);
+    }
+
+    #[test]
+    fn level_shift_good() {
+        let input_cb = split_input_image_34x34_cb();
+        let actual_cb = level_shift(input_cb, 8);
+
+        let expected_cb: Vec<Vec<i8>> = split_and_shifted_input_image_34x34_cb();
+
+        assert_eq!(actual_cb, expected_cb);
+    }
+
+    #[test]
+    fn fdct_good() {
+        let block = &split_and_shifted_input_image_34x34_cb()[0];
+
+        fdct(&block, 1);
+    }
+
+    fn split_and_shifted_input_image_34x34_cb() -> Vec<Vec<i8>> {
+        Vec::from([Vec::from([-43, 89, -84, 15, 26, 74, -49, -36, -15, -20, -17, 70, 19, -11, -26, 34, -29, 18, -4, 23, -15, -29, 32, 16, 35, 40, 11, -62, -16, -25, -19, -62, -73, -5, -43, -22, -27, -9, 84, 22, -19, 62, 20, -19, -43, 8, 31, -27, -21, 40, 35, -32, -37, 43, -1, 47, 10, 27, -3, -34, -8, -9, -60, 0]),
+                   Vec::from([5, 32, -49, 1, 21, 30, -4, 64, 57, -3, 48, 1, -16, 24, 107, -65, -45, 7, -18, 55, 12, -56, 43, -19, 21, -41, 23, 29, 10, -42, 48, -45, -25, 7, 3, -22, -21, 38, -14, -32, -76, 37, 25, 22, 43, -29, -14, -7, -5, -31, 7, 57, 9, -5, 50, 11, -30, -30, -55, 13, 23, 20, 2, -8]),
+                   Vec::from([67, -63, 57, 18, 40, -19, -7, -34, 29, -23, -25, -23, 63, 9, -1, -5, -3, 7, 24, 16, -60, 10, 0, -49, 4, -4, 44, -77, -13, -9, -9, -75, 13, 15, 87, -12, 70, 32, 60, -14, 27, -36, -36, -11, 47, -3, -54, 21, -5, 43, 67, 46, 4, -79, 19, -20, 6, -11, -7, 4, 10, 21, 16, 43]),
+                   Vec::from([-34, 10, 22, -57, -2, 1, -18, -35, -1, -22, -6, 8, -67, -6, 1, -49, -41, 43, -2, 47, -53, -28, -5, 18, 2, -83, -29, -3, 85, -4, 62, -1, -1, 23, -35, 11, 30, 46, 64, -32, 45, -45, 77, 48, -13, -21, -19, -40, 34, -1, -76, 25, -7, -20, 6, -15, -18, 13, -6, 50, -10, 11, -18, -10])])
+    }
+
+    fn split_input_image_34x34_cb() -> Vec<Vec<u8>> {
+        Vec::from([Vec::from([85, 217, 44, 143, 154, 202, 79, 92, 113, 108, 111, 198, 147, 117, 102, 162, 99, 146, 124, 151, 113, 99, 160, 144, 163, 168, 139, 66, 112, 103, 109, 66, 55, 123, 85, 106, 101, 119, 212, 150, 109, 190, 148, 109, 85, 136, 159, 101, 107, 168, 163, 96, 91, 171, 127, 175, 138, 155, 125, 94, 120, 119, 68, 128]),
+                   Vec::from([133, 160, 79, 129, 149, 158, 124, 192, 185, 125, 176, 129, 112, 152, 235, 63, 83, 135, 110, 183, 140, 72, 171, 109, 149, 87, 151, 157, 138, 86, 176, 83, 103, 135, 131, 106, 107, 166, 114, 96, 52, 165, 153, 150, 171, 99, 114, 121, 123, 97, 135, 185, 137, 123, 178, 139, 98, 98, 73, 141, 151, 148, 130, 120]),
+                   Vec::from([195, 65, 185, 146, 168, 109, 121, 94, 157, 105, 103, 105, 191, 137, 127, 123, 125, 135, 152, 144, 68, 138, 128, 79, 132, 124, 172, 51, 115, 119, 119, 53, 141, 143, 215, 116, 198, 160, 188, 114, 155, 92, 92, 117, 175, 125, 74, 149, 123, 171, 195, 174, 132, 49, 147, 108, 134, 117, 121, 132, 138, 149, 144, 171]),
+                   Vec::from([94, 138, 150, 71, 126, 129, 110, 93, 127, 106, 122, 136, 61, 122, 129, 79, 87, 171, 126, 175, 75, 100, 123, 146, 130, 45, 99, 125, 213, 124, 190, 127, 127, 151, 93, 139, 158, 174, 192, 96, 173, 83, 205, 176, 115, 107, 109, 88, 162, 127, 52, 153, 121, 108, 134, 113, 110, 141, 122, 178, 118, 139, 110, 118])])
     }
 
     fn input_image_34x34_cr() -> Vec<u8> {
