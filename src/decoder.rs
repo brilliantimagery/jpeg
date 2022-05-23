@@ -147,58 +147,151 @@ fn get_huffman_info(mut encoded_image: &mut Iter<u8>) -> SSSSTable {
     }
 }
 
-fn parse_huffman_info(mut encoded_image: &mut Iter<u8>) -> (u8, u8, [[u8; 16]; 16]) {
-    let _l_h = bytes_to_int_two_consumed(&mut encoded_image);
+fn parse_huffman_info(encoded_image: &mut Iter<u8>) -> (u8, u8, [[Option<u8>; 16]; 16]) {
+    let _l_h = bytes_to_int_two_consumed(encoded_image);
     let t_c_h = encoded_image.next().unwrap();
     let t_c = t_c_h >> 4;
     let t_h = t_c_h & 0xF;
-    let mut code_lengths = [[0xFF_u8; 16]; 16];
+    // let mut code_lengths = [[0xFF_u8; 16]; 16];
+    let mut code_lengths: [[Option<u8>; 16]; 16] = [[None; 16]; 16];
     let mut lengths: BTreeMap<u8, u8> = BTreeMap::new();
     for code_length_index in 0..16 {
-        let l_i: u8 = *encoded_image.next().unwrap();
+        let l_i = *encoded_image.next().unwrap();
         if l_i > 0 {
             lengths.insert(code_length_index, l_i);
         }
     }
     for (code_length_index, l_i) in lengths.iter() {
         for i in 0..*l_i {
-            code_lengths[*code_length_index as usize][i as usize] = *encoded_image.next().unwrap();
+            code_lengths[*code_length_index as usize][i as usize] = Some(*encoded_image.next().unwrap());
         }
     }
 
     (t_c, t_h, code_lengths)
 }
 
-fn make_ssss_table(code_lengths: [[u8; 16]; 16]) -> (HashMap<u32, u8>, usize, usize) {
+/// TODO: this algerythom presumably doesn't work for all possible tables
+// fn make_ssss_table(code_lengths: [[u8; 16]; 16]) -> (HashMap<u32, u8>, usize, usize) {
+fn make_ssss_table(code_lengths: [[Option<u8>; 16]; 16]) -> (HashMap<u32, u8>, usize, usize) {
+    // https://www.youtube.com/watch?v=dM6us854Jk0
+
+    // Codes start towards the top left of the tree
+    // As you move to the right, trailing 1s are added
+    // As you move down, bits are added
+    // So the left most bit represents the top row
+
+    // 0xFF, 0xFF, 0xFF, 0xFF
+    // 0x0,  0x1,  0x2,  0xFF
+    // 0x3,  0xFF, 0xFF, 0xFF
+    // 0x4,  0xFF, 0xFF, 0xFF
+
+    //                                     /   \
+    // Index 0, Code Length 1, Codes:     0     1
+    // Value:                            NA    NA
+    //                                   /\    / \   
+    // Index 1, Code Length 2, Codes:  00 01  10 11
+    // Value:                           0  1   2 NA
+    //                                           / \
+    // Index 2, Code Length 3, Codes:         110  111
+    // Value:                                   3   NA
+    //                                              / \
+    // Index 3: Code Length 4, Codes:            1110  1111
+    // Values:                                      4   NA 
+    // NOTE: padded/leading 1 not shown so all above codes would be stored with an
+    // additional 1 in front of it.
+
+    // let mut code: u32 = 1;
+    // let mut table: HashMap<u32, u8> = HashMap::new();
+
+    // // Iterate over all of the rows of the tree
+    // for bits_in_code_minus_1 in 0..16 {
+    //     // for each row, add another bit
+    //     code = code << 1;
+    //     // if there are no codes with that number of bits go to the next row
+    //     if code_lengths[bits_in_code_minus_1][0].is_none() {
+    //         continue;
+    //     }
+
+    //     // let mut values_w_n_bits: usize = 0;
+    //     // let values: std::slice::Iter<Option<u8>> = code_lengths[bits_in_code_minus_1].iter();
+    //     for (i, value) in code_lengths[bits_in_code_minus_1].iter().enumerate() {
+    //         if value.is_none() {
+    //             break;
+    //         }
+    //         if i > 0 {
+    //             let mut only_removed_ones = true;
+    //             // shouldn't need number_of_... it's just there to prevent errors
+    //             while only_removed_ones && number_of_used_bits(&code) > 0 {
+    //                 only_removed_ones = code & 1 == 1;
+    //                 code = code >> 1;
+    //             }
+    //             code = (code << 1) + 1;
+
+    //             while number_of_used_bits(&code) < bits_in_code_minus_1 + 2 {
+    //                 code = code << 1;
+    //             }
+    //             // code = code << (bits_in_code_minus_1 + 1 - (number_of_used_bits(&code) - 1));
+    //         }
+    //         table.insert(code, value.unwrap());
+    //     }
+    // }
+
+
     // storing the huffman code in the bits of a u32
     // the code is preceided by a 1 so there can be leading zeros
     let mut code: u32 = 1;
     let mut table: HashMap<u32, u8> = HashMap::new();
     for index in 0..16 {
-        // the code lengths are stored in a HashMap that was initized with 0xFF,
-        // so if the first cell has 0xFF then there are now codes with a length
+        // the code lengths (number of bytes) are stored in a HashMap that was initized with 0xFF
+        // and the codes only go up to 16,
+        // so if the first cell has 0xFF then there are no codes with a length
         // equal to that row's index
-        if code_lengths[index][0] < 0xFF_u8 {
-            // remove the cells that still have the initial value, 0xFF
-            let values: Vec<u8> = code_lengths[index].into_iter().filter(|x| x < &0xFF_u8).collect::<Vec<u8>>();
+        // so remove the rows that still have the initial value, 0xFF
+        // since, as previously discussed, there aren't any codes of that length
+        // if code_lengths[index][0] < 0xFF_u8 {
+        if code_lengths[index][0].is_some() {
+            // filter out the values that have 0xFF since those are initial values
+            // and don't have a valid code length
+            let values: Vec<u8> = code_lengths[index]
+                .into_iter()
+                // .filter(|x| x < &0xFF_u8)
+                .filter(|x| x.is_some())
+                .map(|x| x.unwrap())
+                .collect::<Vec<u8>>();
+            // for each code lengh start with the 0th code of that length
             let mut values_w_n_bits: usize = 0;
+            // once all codes of a length have been processed,
+            // move on
             while values_w_n_bits <= values.len() {
+                // Shift the padded/leading 1 so that the code's the right length
+                // index + 1 is the desired code length since index is base 0 so one less then the code length
+                // number_of_used_bits(&code) - 1 is the present code length since the leading/padded one takes up a bit
+                // the desired code length - the present code length is the amount it must grow to achieve the desired length
                 code = code << (index + 1 - (number_of_used_bits(&code) - 1));
+                // While the first code of a langth "automatically" works, 
+                // additionl codes of a length must have bits flipped 
                 if values_w_n_bits > 0 {
+                    // Remove bits (move up the tree) until you remove a 0 
+                    // (so you can move to the right branch from the left)
+                    // Or until you hit the top (again, so you can move to the right branch)
                     loop {
                         let removed: u32 = code & 1;
                         code = code >> 1;
-                        if !(removed == 1 && number_of_used_bits(&code) > 1) {
+                        // if !(removed == 1 && number_of_used_bits(&code) > 1) {
+                        if removed == 0 || number_of_used_bits(&code) <= 1 {
                             break;
                         }
                     }
+                    // Move down and to the right one node along the tree
                     code = (code << 1) + 1;
+                    // Extend the code until it's appropreately long
+                    // if number_of_used_bits(&code) < index + 2 {
+                    //     code = code << 1
+                    // }
                     code = code << (index + 1) - (number_of_used_bits(&code) - 1);
                 }
                 if values.len() > values_w_n_bits {
-                    let key = code;
-                    let value = values[values_w_n_bits];
-                    table.insert(key, value);
+                    table.insert(code, values[values_w_n_bits]);
                 }
                 values_w_n_bits += 1;
             }
@@ -878,96 +971,211 @@ mod tests {
         path.push("F-18.ljpg");
         let path = path.as_path();
         let encoded_image = get_file_as_byte_iter(path);
-        // let mut file = File::open(path).expect("The test file wasn't where it was expected.");
-        // let mut encoded_image = Vec::from([]);
-        // file.read_to_end(&mut encoded_image);
+        let mut encoded_image = encoded_image.iter();
 
-        let mut e_i: Vec<u8> = Vec::with_capacity(encoded_image.len());
-        for i in 0..encoded_image.len() {
-            e_i.push(encoded_image[i]);
-        }
-
-        let mut encoded_image = e_i.iter();
         for _ in 0..0x17 {
             encoded_image.next();
         }
 
-        // let read_index = 0x15;
         let (t_c, t_h, code_lengths) = parse_huffman_info(&mut encoded_image);
 
-        let expected = [[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                       [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]];
+        let expected = [
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(0), Some(1), Some(2), None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(3), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(4), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(5), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(6), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(7), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(8), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+        ];
 
         assert_eq!(code_lengths, expected);
         assert_eq!(t_c, 0);
         assert_eq!(t_h, 0);
-        assert_eq!(encoded_image.len(), 107709);
-        assert_eq!(encoded_image.next().unwrap(), &0xFF)
     }
 
     #[test]
     fn make_ssss_tables_good() {
-        let code_lengths = [[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-                               [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]];
+        let code_lengths = [
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(0), Some(1), Some(2), None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(3), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(4), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(5), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(6), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(7), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(8), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+        ];
 
-        let expected = HashMap::from([(4, 0), (30, 4), (6, 2), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]);
+        let expected = HashMap::from([
+            (4, 0),
+            (30, 4),
+            (6, 2),
+            (126, 6),
+            (254, 7),
+            (510, 8),
+            (14, 3),
+            (5, 1),
+            (62, 5),
+        ]);
 
         let (tables, min_code_length, max_code_length) = make_ssss_table(code_lengths);
 
-        assert_eq!(tables, expected);   
+        assert_eq!(tables, expected);
         assert_eq!(min_code_length, 2);
         assert_eq!(max_code_length, 8);
     }
 
-//     #[bench]
-//     fn make_ssss_tables_bench(b: &mut Bencher) {
-//         let code_lengths = [[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-//                                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]];
+    #[test]
+    fn make_ssss_tables_good2() {
+        let code_lengths = [
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                Some(0), Some(1), Some(2), Some(3), Some(4), Some(5), Some(6), None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+            [
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+            ],
+        ];
 
-//         b.iter(|| make_ssss_table(code_lengths));            
-//     }
+        let expected = HashMap::from([
+            (8, 0),
+            (9, 1),
+            (10, 2),
+            (11, 3),
+            (12, 4),
+            (13, 5),
+            (14, 6),
+        ]);
+
+        let (tables, min_code_length, max_code_length) = make_ssss_table(code_lengths);
+
+        assert_eq!(tables, expected);
+        assert_eq!(min_code_length, 3);
+        assert_eq!(max_code_length, 3);
+    }
 
     #[test]
     fn parse_frame_header_good() {
