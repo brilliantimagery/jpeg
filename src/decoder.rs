@@ -1,19 +1,26 @@
 #[allow(dead_code)]
 
-use std::{collections::HashMap, collections::BTreeMap, ops::Neg};
+use std::backtrace::Backtrace;
+use std::collections::{HashMap, BTreeMap};
 use std::slice::Iter;
 
-const SOF0: u16 = 0xFFC0;  // Baseline DCT
-const SOF3: u16 = 0xFFC3;  // Lossless Huffman Encoding
+use crate::jpeg_utils::Marker;
 
-const DHT: u16 = 0xFFC4;  // Define Huffman table(s)
+#[derive(thiserror::Error, Debug)]
+#[error("There was a Jpeg decoder error.")]
+pub struct JpegDecoderError {
+    #[from]
+    source: BadMagicNumberError,
+    backtrace: Backtrace,
+}
 
-const SOI: u16 = 0xFFD8;  // Start of image
-const EOI: u16 = 0xFFD9;  // End of image
-const SOS: u16 = 0xFFDA;  // Start of scan
-const DQT: u16 = 0xFFDB;  // Define quantization table(s)
-const APP: u16 = 0xFFE0;  //Reserved for application segments
-const APPn: u16 = 0xFFEF;  //Reserved for application segments
+#[derive(thiserror::Error, Debug)]
+#[error("The data doesn't have the expected Jpeg magic number.")]
+pub struct BadMagicNumberError;
+
+#[derive(thiserror::Error, Debug)]
+#[error("Necessery informaiton seems to be missing from the Jpeg.")]
+pub struct MissingInfoError;
 
 struct ContextContext<'a> {
     component: &'a usize,
@@ -77,96 +84,47 @@ struct SSSSTable {
     max_code_length: usize,     // number of bits of longest Huffman code
 }
 
-// pub fn decode(encoded_image: Vec<u8>) -> Vec<u32> {
-//     Vec::from([0_u32])
-// }
-
-// pub fn decode(encoded_image: Vec<u8>) -> Vec<u32> {
-//     let mut encoded_image = encoded_image.iter();
-//     encoded_image = is_jpeg(encoded_image);
-    
-//     let mut frame_header: FrameHeader = FrameHeader {p_:0, x_:0, y_:0, components:HashMap::new()};
-
-//     let mut ssss_tables: HashMap<usize, SSSSTable> = HashMap::new();
-//     let mut raw_image: Vec<u32> = Vec::new();
-//     while encoded_image.len() > 0 {
-//     // while read_index < encoded_image.len() {
-
-//         let possible_marker: u16 = bytes_to_int_two(encoded_image.next(), encoded_image.next());
-//         match possible_marker {
-//             SOF3 => {
-//                 let header_info = parse_frame_header(encoded_image); 
-
-//                 frame_header = header_info.0;
-//                 encoded_image = header_info.1;
-//             },
-//             DHT => {
-//                 // let (huffman_table, read_index) = get_huffman_info(&encoded_image, read_index);
-//                 // ssss_tables.insert(huffman_table.t_h as usize, huffman_table);
-//                 let huffman_info = get_huffman_info(encoded_image);
-
-//                 encoded_image = huffman_info.1;
-//                 ssss_tables.insert(huffman_info.0.t_h as usize, huffman_info.0);
-//             },
-//             SOS => {
-//                 let scan_header_info = parse_scan_header(&encoded_image, read_index);
-//                 let image_info = decode_image(&encoded_image, &frame_header, scan_header_info.0, 
-//                     &ssss_tables, scan_header_info.1);
-
-//                 raw_image = image_info.0;
-//                 read_index = image_info.1;
-//             },
-//             marker if APP <= marker && marker <= APPn => {
-//                 read_index = skip_app_marker(&encoded_image, read_index);
-//             }
-//             EOI => { break; }
-//             marker if marker > 0xFF00 && marker < 0xFFFF => panic!("Unimplimented marker!"),
-//             _ => { read_index += 1; },
-//         }
-//     }
-//     raw_image
-// }
-
-pub fn decode(encoded_image: Vec<u8>) -> Vec<u32> {
-    let mut encoded_image_iter = encoded_image.iter();
-    assert!(is_jpeg(&mut encoded_image_iter).is_ok());
+pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
+    let mut encoded_image = encoded_image.iter();
+    is_jpeg(&mut encoded_image)?;
 
     let mut frame_header: FrameHeader = FrameHeader {p_:0, x_:0, y_:0, components:HashMap::new()};
     let mut ssss_tables: HashMap<usize, SSSSTable> = HashMap::new();
     let mut raw_image: Vec<u32> = Vec::new();
-    while encoded_image_iter.len() > 0 {
-        match bytes_to_int_two(&mut encoded_image_iter) {
-            SOF3 => {
-                frame_header = parse_frame_header(&mut encoded_image_iter);
+
+    use crate::jpeg_utils::Marker::*;
+    while encoded_image.len() > 0 {
+        match bytes_to_int_two_peeked(&mut encoded_image) {
+            marker if marker == SOF3 as u16 => {
+                frame_header = parse_frame_header(&mut encoded_image);
             },
-            DHT => {
-                let huffman_info = get_huffman_info(&mut encoded_image_iter);
+            marker if marker == DHT as u16 => {
+                let huffman_info = get_huffman_info(&mut encoded_image);
                 ssss_tables.insert(huffman_info.t_h as usize, huffman_info);
             },
-            SOS => {
-                let scan_header_info = parse_scan_header(&mut encoded_image_iter);
-                raw_image = decode_image(&mut encoded_image_iter, 
-                    &encoded_image, 
+            marker if marker == SOS as u16 => {
+                let scan_header_info = parse_scan_header(&mut encoded_image);
+                raw_image = decode_image(&mut encoded_image,
                     &frame_header, 
                     scan_header_info, 
                     &ssss_tables);
             },
-            marker if APP <= marker && marker <= APPn => {
-                skip_app_marker(&mut encoded_image_iter);
+            marker if APP as u16 <= marker && marker <= APPn as u16 => {
+                skip_app_marker(&mut encoded_image);
             }
-            EOI => { break; }
+            marker if marker == EOI as u16 => { break; }
             marker if marker > 0xFF00 && marker < 0xFFFF => panic!("Unimplimented marker!"),
             _ => {
-                encoded_image_iter.next();
+                encoded_image.next();
             }
         }
     }
 
-    raw_image
+    Ok(raw_image)
 }
 
 fn skip_app_marker(mut encoded_image: &mut Iter<u8>) {
-    let l_p = bytes_to_int_two(&mut encoded_image);
+    let l_p = bytes_to_int_two_consumed(&mut encoded_image);
 
     // TODO: this is ugly should should use skip or something
 
@@ -190,7 +148,7 @@ fn get_huffman_info(mut encoded_image: &mut Iter<u8>) -> SSSSTable {
 }
 
 fn parse_huffman_info(mut encoded_image: &mut Iter<u8>) -> (u8, u8, [[u8; 16]; 16]) {
-    let _l_h = bytes_to_int_two(&mut encoded_image);
+    let _l_h = bytes_to_int_two_consumed(&mut encoded_image);
     let t_c_h = encoded_image.next().unwrap();
     let t_c = t_c_h >> 4;
     let t_h = t_c_h & 0xF;
@@ -274,7 +232,7 @@ fn number_of_used_bits(numb: &u32) -> usize {
 }
 
 fn parse_scan_header(mut encoded_image: &mut Iter<u8>) -> ScanHeader {
-    let _l_s = bytes_to_int_two(&mut encoded_image);
+    let _l_s = bytes_to_int_two_consumed(&mut encoded_image);
     let n_s = *encoded_image.next().unwrap() as usize;
     let mut head_params: HashMap<u8, HeaderParameter> = HashMap::new();
     for _ in 0..n_s {
@@ -304,10 +262,10 @@ fn parse_scan_header(mut encoded_image: &mut Iter<u8>) -> ScanHeader {
 }
 
 fn parse_frame_header(mut encoded_image: &mut Iter<u8>) -> FrameHeader {
-    let _l_f: u16 = bytes_to_int_two(&mut encoded_image);
+    let _l_f: u16 = bytes_to_int_two_consumed(&mut encoded_image);
     let p_: u8 = *encoded_image.next().unwrap();
-    let y_: u16 = bytes_to_int_two(&mut encoded_image);
-    let x_: u16 = bytes_to_int_two(&mut encoded_image);
+    let y_: u16 = bytes_to_int_two_consumed(&mut encoded_image);
+    let x_: u16 = bytes_to_int_two_consumed(&mut encoded_image);
     let n_f = *encoded_image.next().unwrap() as usize;
     let mut components: HashMap<u8, Component> = HashMap::new();
     for _ in 0..n_f as usize {
@@ -332,12 +290,12 @@ fn parse_frame_header(mut encoded_image: &mut Iter<u8>) -> FrameHeader {
     }
 }
 
-fn is_jpeg(mut encoded_image: &mut Iter<u8>) -> Result<bool, bool>{
+fn is_jpeg(mut encoded_image: &mut Iter<u8>) -> Result<(), BadMagicNumberError> {
     // if bytes_to_int_two(encoded_image.next(), encoded_image.next()) != SOI {
-    if bytes_to_int_two(&mut encoded_image) == SOI {
-        Ok(true)
+    if bytes_to_int_two_consumed(&mut encoded_image) == Marker::SOI as u16 {
+        Ok(())
     } else {
-        Err(false)
+        Err(BadMagicNumberError)
     }
     // if bytes_to_int_two(encoded_image.next(), encoded_image.next()) != SOI {
     //     panic!("This doesn't seem to be a JPEG.");
@@ -347,12 +305,16 @@ fn is_jpeg(mut encoded_image: &mut Iter<u8>) -> Result<bool, bool>{
 // fn bytes_to_int_two(mut byte_0: Option<&u8>, mut byte_1: Option<&u8>) -> u16 {
 //     (*byte_0.unwrap() as u16) << 8 | *byte_1.unwrap() as u16
 // }
-fn bytes_to_int_two(bytes: &mut Iter<u8>) -> u16 {
+fn bytes_to_int_two_consumed(bytes: &mut Iter<u8>) -> u16 {
     (*bytes.next().unwrap() as u16) << 8 | *bytes.next().unwrap() as u16
-    // (*byte_0.unwrap() as u16) << 8 | *byte_1.unwrap() as u16
 }
 
-fn decode_image(mut encoded_image_iter: &mut Iter<u8>, encoded_image: &[u8], frame_header: &FrameHeader, scan_header: 
+fn bytes_to_int_two_peeked(bytes: &mut Iter<u8>) -> u16 {
+    let mut bytes = bytes.by_ref().peekable();
+    (*bytes.next().unwrap() as u16) << 8 | **bytes.peek().unwrap() as u16
+}
+
+fn decode_image(mut encoded_image: &mut Iter<u8>, frame_header: &FrameHeader, scan_header: 
     ScanHeader, ssss_tables: &HashMap<usize, SSSSTable>) -> Vec<u32> {
 
     let width = frame_header.x_ as usize;
@@ -364,7 +326,7 @@ fn decode_image(mut encoded_image_iter: &mut Iter<u8>, encoded_image: &[u8], fra
     let mut write_index = 0_usize;
     // let image_start_index = read_index;
 
-    let image_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image_iter, encoded_image);
+    let image_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
     let mut bit_read_index: usize = 0;
 
     while bit_read_index < image_bits.len() {
@@ -414,44 +376,44 @@ fn  get_prediction(context: ContextContext, mut predictor: u8) -> u32 {
     }
 }
 
-fn get_image_data_without_stuffed_zero_bytes(mut encoded_image_iter: &mut Iter<u8>, encoded_image: &[u8]) -> Vec<u8> {
+fn get_image_data_without_stuffed_zero_bytes(encoded_image: &mut Iter<u8>) -> Vec<u8> {
     // See JPG document 10918-1 P33 B.1.1.5 Note 2
-    let mut image_data: Vec<u8> = Vec::with_capacity(encoded_image_iter.len());
-    let a = encoded_image.len();
-    let b = encoded_image_iter.len();
-    let encoded_image = &encoded_image[encoded_image.len() - encoded_image_iter.len()..];
-
-    let mut i = 0_usize;
-    let mut this_byte = encoded_image[i];
-    let mut next_byte = encoded_image[i + 1];
-    loop {
-        if this_byte < 0xFF {
+    let mut image_data: Vec<u8> = Vec::with_capacity(encoded_image.len());
+    let mut image = encoded_image.clone();
+    
+    let mut this_byte = image.next();
+    let mut next_byte = image.next();
+    let mut i = 0;
+    while this_byte.is_some() {
+        let this_val = *this_byte.unwrap();
+        let next_val = *next_byte.unwrap_or(&0);       
+        if this_val < 0xFF {
             // if the current element is less then 0xFF the proceide as usual
-            image_data.push(this_byte);
-            i += 1;
+            image_data.push(this_val);
             this_byte = next_byte;
-            next_byte = encoded_image[i + 1];
-            encoded_image_iter.next();
-        } else if next_byte == 0 {
+            next_byte = image.next();
+            encoded_image.next();
+            i += 1;
+        } else if next_val == 0 {
             // given that the current element is 0xFF
             // if the next element is zero then
             // this element should be read and the next is a "zero byte"
             // which was added to avoid confusion with markers and should be discarded
-            image_data.push(this_byte);
-            i += 2;
-            this_byte = encoded_image[i];
-            next_byte = encoded_image[i + 1];
-            encoded_image_iter.next();
-            encoded_image_iter.next();
+            image_data.push(this_val);
+            this_byte = image.next();
+            next_byte = image.next();
+            encoded_image.next();
+            encoded_image.next();
+            i += 1;
         } else {
             // Hit the end of the section
             break;
         }
     }
 
-    let mut bits: Vec<u8> = Vec::with_capacity(image_data.len() * 8);
+    let mut bits: Vec<u8> = Vec::with_capacity(i * 8);
 
-    for i in 0..image_data.len() {
+    for i in 0..i {
         bits.push((image_data[i] >> 7) & 1);
         bits.push((image_data[i] >> 6) & 1);
         bits.push((image_data[i] >> 5) & 1);
@@ -700,20 +662,61 @@ mod tests {
 //     // }
 
     #[test]
-    fn get_image_data_without_stuffed_zero_bytes_good() {
+    fn get_image_data_without_stuffed_zero_bytes_good_reguar_number_then_marker() {
         let encoded_image: Vec<u8> = Vec::from([0x00, 0xFE, 0x00, 0xFF, 0x00, 0x05, 0xFF, 0xDA]);
-        let expected_bits: Vec<u8> = Vec::from([1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
-        // let read_index: usize = 1;
+        let expected_bits: Vec<u8> = Vec::from([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
+  
+        let mut encoded_image = encoded_image.iter();
 
-        let mut encoded_image_iter = encoded_image.iter();
-        encoded_image_iter.next();
+        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
 
-        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image_iter, &encoded_image);
+        assert_eq!(actual_bits, expected_bits);
+        assert_eq!(actual_bits.len(), 40);
+        assert_eq!(encoded_image.next().unwrap(), &0xFF);
+        assert_eq!(encoded_image.next().unwrap(), &0xDA);
+    }
+
+    #[test]
+    fn get_image_data_without_stuffed_zero_bytes_good_padding_then_marker() {
+        let encoded_image: Vec<u8> = Vec::from([0x00, 0xFE, 0x00, 0xFF, 0x00, 0xFF, 0xDA]);
+        let expected_bits: Vec<u8> = Vec::from([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]);
+  
+        let mut encoded_image = encoded_image.iter();
+
+        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
 
         assert_eq!(actual_bits, expected_bits);
         assert_eq!(actual_bits.len(), 32);
-        assert_eq!(encoded_image_iter.next().unwrap(), &0xFF);
-        assert_eq!(encoded_image_iter.next().unwrap(), &0xDA);
+        assert_eq!(encoded_image.next().unwrap(), &0xFF);
+        assert_eq!(encoded_image.next().unwrap(), &0xDA);
+    }
+
+    #[test]
+    fn get_image_data_without_stuffed_zero_bytes_good_reguar_number_with_no_marker() {
+        let encoded_image: Vec<u8> = Vec::from([0x00, 0xFE, 0x00, 0xFF, 0x00, 0x05]);
+        let expected_bits: Vec<u8> = Vec::from([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
+  
+        let mut encoded_image = encoded_image.iter();
+
+        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
+
+        assert_eq!(actual_bits, expected_bits);
+        assert_eq!(actual_bits.len(), 40);
+        assert!(encoded_image.next().is_none());
+    }
+
+    #[test]
+    fn get_image_data_without_stuffed_zero_bytes_good_padding_with_no_marker() {
+        let encoded_image: Vec<u8> = Vec::from([0x00, 0xFE, 0x00, 0xFF, 0x00]);
+        let expected_bits: Vec<u8> = Vec::from([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]);
+  
+        let mut encoded_image = encoded_image.iter();
+
+        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
+
+        assert_eq!(actual_bits, expected_bits);
+        assert_eq!(actual_bits.len(), 32);
+        assert!(encoded_image.next().is_none());
     }
 
     #[test]
@@ -1066,7 +1069,7 @@ mod tests {
         let buffer = Vec::from([0xC2_u8, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
         let mut buffer = buffer.iter();
         let expected: u16 = 0xC21D_u16;
-        assert_eq!(bytes_to_int_two(&mut buffer), expected);
+        assert_eq!(bytes_to_int_two_consumed(&mut buffer), expected);
         assert_eq!(buffer.next().unwrap(), &0x8D);
     }
 
@@ -1075,7 +1078,7 @@ mod tests {
         let buffer = Vec::from([0xC2_u8, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
         let mut buffer = buffer.iter();
         let expected = 7564_u16;
-        assert_ne!(bytes_to_int_two(&mut buffer), expected);
+        assert_ne!(bytes_to_int_two_consumed(&mut buffer), expected);
         assert_eq!(buffer.next().unwrap(), &0x8D);
     }
 }

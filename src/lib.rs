@@ -1,7 +1,9 @@
+#![feature(backtrace)]
 #![feature(test)]
 
 mod decoder;
 mod encoder;
+mod jpeg_utils;
 
 pub fn decode_image(encoded_image: Vec<u8>) {
     decoder::decode(encoded_image);
