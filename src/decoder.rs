@@ -38,6 +38,13 @@ impl ContextContext<'_> {
     }
 }
 
+/// Quantization Table, 10918-1, B.2.4.1, P. 39
+struct QuantiziationTable {
+    p_q: u8,       // Element precision,
+    t_q: u8,        // Destinaiton identifier
+    q_k: [u16; 64], // Table element 
+}
+
 struct Component {
     c_: u8,  // Component identifier, 10918-1 P. 36
     h_: u8,  // Horizontal sampling factor
@@ -80,7 +87,7 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
     let mut encoded_image = encoded_image.iter();
     is_jpeg(&mut encoded_image)?;
 
-    let mut frame_header: FrameHeader = FrameHeader {
+    let mut frame_header = FrameHeader {
         p_: 0,
         x_: 0,
         y_: 0,
@@ -88,6 +95,7 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
     };
     let mut ssss_tables: HashMap<usize, SSSSTable> = HashMap::new();
     let mut raw_image: Vec<u32> = Vec::new();
+    let mut quantization_tables: HashMap<u8, QuantiziationTable> = HashMap::new();
 
     use crate::jpeg_utils::Marker::*;
     while encoded_image.len() > 0 {
@@ -95,6 +103,11 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
             marker if marker == SOF3 as u16 => {
                 encoded_image.next();
                 frame_header = parse_frame_header(&mut encoded_image)?;
+            }
+            marker if marker == DQT as u16 => {
+                encoded_image.next();
+                let table = parse_quantizaiton_table(&mut encoded_image)?;
+                quantization_tables.insert(table.t_q, table);
             }
             marker if marker == DHT as u16 => {
                 encoded_image.next();
@@ -126,6 +139,30 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
     }
 
     Ok(raw_image)
+}
+
+fn parse_quantizaiton_table(encoded_image: &mut Iter<u8>) -> Result<QuantiziationTable, OutOfBoundsError> {
+    let _l_q = bytes_to_int_two_consumed(encoded_image)?;
+    let p_t_q = *encoded_image.next().ok_or(OutOfBoundsError)?;
+    let p_q = p_t_q >> 4;
+    let t_q = p_t_q & 0xF;
+    let mut q_k = [0u16; 64];
+
+    if p_q == 0 {
+        for i in q_k.iter_mut() {
+            *i = *encoded_image.next().ok_or(OutOfBoundsError)? as u16
+        }
+    } else {
+        for i in q_k.iter_mut() {
+            *i = bytes_to_int_two_consumed(encoded_image)?
+        }
+    }
+
+    Ok(QuantiziationTable {
+        p_q,
+        t_q,
+        q_k,
+    })
 }
 
 fn skip_app_marker(encoded_image: &mut Iter<u8>) -> Result<(), OutOfBoundsError> {
@@ -582,6 +619,46 @@ mod tests {
     use crate::test_utils;
 
     use super::*;
+
+
+    #[test]
+    fn parse_quantizaiton_table_good_8_bit() {
+        let encoded_image = test_utils::get_file_as_byte_iter("raw_quantization_table_8_bit.bin");
+        let mut encoded_image = encoded_image.iter();
+
+        let actual_table = parse_quantizaiton_table(&mut encoded_image).unwrap();
+
+        let expected_p_q = 0;
+        let expected_t_q = 3;
+        let expected_q_k= &test_utils::get_file_as_byte_iter("raw_quantization_table_8_bit_q_k.bin")
+            .iter()
+            .map(|x| *x as u16)
+            .collect::<Vec<_>>()
+            [..];
+
+        assert_eq!(actual_table.p_q, expected_p_q);
+        assert_eq!(actual_table.t_q, expected_t_q);
+        assert_eq!(actual_table.q_k[..], expected_q_k[..]);
+    }
+    
+    #[test]
+    fn parse_quantizaiton_table_good_16_bit() {
+        let encoded_image = test_utils::get_file_as_byte_iter("raw_quantization_table_16_bit.bin");
+        let mut encoded_image = encoded_image.iter();
+
+        let actual_table = parse_quantizaiton_table(&mut encoded_image).unwrap();
+
+        let expected_p_q = 1;
+        let expected_t_q = 5;
+        let expected_q_k= &test_utils::get_file_as_byte_iter("raw_quantization_table_16_bit_q_k.bin")
+            .chunks(2)
+            .map(|x| (x[0] as u16) << 8 | (x[1] as u16))
+            .collect::<Vec<_>>()[..];
+
+        assert_eq!(actual_table.p_q, expected_p_q);
+        assert_eq!(actual_table.t_q, expected_t_q);
+        assert_eq!(actual_table.q_k[..], expected_q_k[..]);
+    }
 
     #[test]
     fn skip_app_marker_good() {
