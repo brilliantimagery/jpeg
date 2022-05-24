@@ -109,7 +109,7 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
                     &frame_header,
                     &scan_header,
                     &ssss_tables,
-                );
+                )?;
             }
             marker if APP as u16 <= marker && marker <= APPn as u16 => {
                 encoded_image.next();
@@ -388,7 +388,6 @@ fn is_jpeg(encoded_image: &mut Iter<u8>) -> Result<bool, BadMagicNumberError> {
     } else {
         Err(BadMagicNumberError {
             source: OutOfBoundsError,
-            // backtrace: OutOfBoundsError
         })
     }
 }
@@ -414,26 +413,22 @@ fn decode_image(
     frame_header: &FrameHeader,
     scan_header: &ScanHeader,
     ssss_tables: &HashMap<usize, SSSSTable>,
-) -> Vec<u32> {
+) -> Result<Vec<u32>, DecodeError> {
     let width = frame_header.x_ as usize;
     let height = frame_header.y_ as usize;
 
-    // panic!("placeholder mumbo jumbo");
     let numb_of_components = frame_header.components.len();
     let mut raw_image: Vec<u32> = Vec::with_capacity(width * height * numb_of_components);
-    let mut write_index = 0_usize;
-    // let image_start_index = read_index;
 
-    let image_bits = get_image_data_without_stuffed_zero_bytes(encoded_image).unwrap();
-    let mut bit_read_index: usize = 0;
+    let image_bits = get_image_data_without_stuffed_zero_bytes(encoded_image)?;
+    let mut image_bits = image_bits.iter();
 
-    while write_index < raw_image.len() {
-        // let image_index = read_index - image_start_index;
-        let component = write_index % numb_of_components;
+    while width * height * numb_of_components < raw_image.len() {
+        let component = raw_image.len() % numb_of_components;
         let context = ContextContext {
             component: &component,
-            x_position: (write_index / numb_of_components) % width,
-            y_position: (write_index / numb_of_components) / width,
+            x_position: (raw_image.len() / numb_of_components) % width,
+            y_position: (raw_image.len() / numb_of_components) / width,
             width: &width,
             numb_of_components: &numb_of_components,
             point_tranform: &scan_header.a_h,
@@ -443,19 +438,12 @@ fn decode_image(
         let p_x = get_prediction(context, scan_header.s_s);
         let pixel_delta = get_huffmaned_value(
             ssss_tables.get(&component).unwrap(),
-            &image_bits,
-            &mut bit_read_index,
-        );
+            &mut image_bits,
+        )?;
         raw_image.push(((p_x as i32 + pixel_delta) & ((1 << frame_header.p_) - 1)) as u32);
-        // dbg!(&raw_image);
-        if write_index % 1_000 == 0 {
-            println!("{:?}, {:?}", write_index, raw_image[write_index]);
-        }
-        // println!("{:?}, {:?}", write_index, raw_image[write_index]);
-        write_index += 1;
     }
 
-    raw_image
+    Ok(raw_image)
 }
 
 fn get_prediction(context: ContextContext, mut predictor: u8) -> u32 {
@@ -468,13 +456,6 @@ fn get_prediction(context: ContextContext, mut predictor: u8) -> u32 {
     } else if context.y_position == 0 {
         predictor = 1;
     }
-
-    // if context.x_position == 1 && context.y_position == 1 {
-    //     let a = context.r_a();
-    //     let b = context.r_b();
-    //     let c = context.r_c();
-    //     let d = 5;
-    // }
 
     match predictor {
         0 => 0,
@@ -545,20 +526,17 @@ fn get_image_data_without_stuffed_zero_bytes(
 
 fn get_huffmaned_value(
     ssss_table: &SSSSTable,
-    image_bits: &[u8],
-    bit_read_index: &mut usize,
-) -> i32 {
+    image_bits: &mut Iter<u8>,
+) -> Result<i32, HuffmanDecodingError> {
     let mut ssss: u8 = 0xFF;
     let mut guess: u32 = 1;
 
     for _ in 0..ssss_table.min_code_length - 1 {
-        guess = (guess << 1) | (image_bits[*bit_read_index] as u32);
-        *bit_read_index += 1;
+        guess = (guess << 1) | (*image_bits.next().ok_or(OutOfBoundsError)? as u32);
     }
 
     for _ in 0..ssss_table.max_code_length {
-        guess = (guess << 1) | (image_bits[*bit_read_index] as u32);
-        *bit_read_index += 1;
+        guess = (guess << 1) | (*image_bits.next().ok_or(OutOfBoundsError)? as u32);
         if ssss_table.table.contains_key(&guess) {
             ssss = ssss_table.table[&guess];
             break;
@@ -569,29 +547,29 @@ fn get_huffmaned_value(
         0xFF => {
             // if no code is matched return a zero, this was said to be the safest somewhere
             // TODO: should if break or be error resistant? also goes for down below
-            panic!("No matching Huffman code was found for a lossless tile jpeg.")
+            // panic!("No matching Huffman code was found for a lossless tile jpeg.")
             // warnings.warn('A Huffman coding error was found in a lossless jpeg in a dng; it may'
             //               + ' have been resolved, there may be corrupted data')
+            Err(HuffmanDecodingError::Default)
         }
-        16 => 32768,
+        16 => Ok(32768),
         _ => {
             let mut pixel_diff: u16 = 0;
             if ssss > 0 {
-                let first_bit = image_bits[*bit_read_index];
-                // step thru the ssss number of bits to get the coded number
-                for _ in 0..ssss {
-                    pixel_diff = (pixel_diff << 1) | (image_bits[*bit_read_index] as u16);
-                    *bit_read_index += 1;
+                let first_bit = *image_bits.next().ok_or(OutOfBoundsError)?;
+                pixel_diff = (pixel_diff << 1) | (first_bit as u16);
+                // step thru the remainder of the ssss number of bits to get the coded number
+                for _ in 0..ssss - 1 {
+                    pixel_diff = (pixel_diff << 1) | (*image_bits.next().ok_or(OutOfBoundsError)? as u16);
                 }
                 // if the first read bit is 0 the number is negative and has to be calculated
                 if first_bit == 0 {
-                    -(((1 << ssss) - (pixel_diff + 1)) as i32)
-                    // (-(1 << ssss) + pixel_diff + 1, bit_read_index)
+                    Ok(-(((1 << ssss) - (pixel_diff + 1)) as i32))
                 } else {
-                    pixel_diff as i32
+                    Ok(pixel_diff as i32)
                 }
             } else {
-                0
+                Ok(0)
             }
         }
     }
@@ -642,11 +620,9 @@ mod tests {
             min_code_length: 2,
             max_code_length: 8,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let mut bit_read_index = 1_usize;
-        let pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
-        assert_eq!(pixel_diff, 0);
-        assert_eq!(bit_read_index, 3);
+        let image_bits: Vec<u8> = Vec::from([0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let pixel_diff = get_huffmaned_value(&ssss_table, &mut image_bits.iter());
+        assert_eq!(pixel_diff.unwrap(), 0);
     }
 
     #[test]
@@ -668,11 +644,9 @@ mod tests {
             min_code_length: 2,
             max_code_length: 8,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let mut bit_read_index = 1_usize;
-        let pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
-        assert_eq!(pixel_diff, 1);
-        assert_eq!(bit_read_index, 4);
+        let image_bits: Vec<u8> = Vec::from([0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let pixel_diff = get_huffmaned_value(&ssss_table, &mut image_bits.iter());
+        assert_eq!(pixel_diff.unwrap(), 1);
     }
 
     #[test]
@@ -694,11 +668,9 @@ mod tests {
             min_code_length: 2,
             max_code_length: 8,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let mut bit_read_index = 1_usize;
-        let pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
-        assert_eq!(pixel_diff, -1);
-        assert_eq!(bit_read_index, 4);
+        let image_bits: Vec<u8> = Vec::from([0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let pixel_diff = get_huffmaned_value(&ssss_table, &mut image_bits.iter());
+        assert_eq!(pixel_diff.unwrap(), -1);
     }
 
     #[test]
@@ -720,11 +692,9 @@ mod tests {
             min_code_length: 2,
             max_code_length: 8,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let mut bit_read_index = 1_usize;
-        let pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
-        assert_eq!(pixel_diff, 3);
-        assert_eq!(bit_read_index, 5);
+        let image_bits: Vec<u8> = Vec::from([1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let pixel_diff = get_huffmaned_value(&ssss_table, &mut image_bits.iter());
+        assert_eq!(pixel_diff.unwrap(), 3);
     }
 
     #[test]
@@ -746,11 +716,9 @@ mod tests {
             min_code_length: 2,
             max_code_length: 8,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let mut bit_read_index = 1_usize;
-        let pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
-        assert_eq!(pixel_diff, -3);
-        assert_eq!(bit_read_index, 5);
+        let image_bits: Vec<u8> = Vec::from([1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let pixel_diff = get_huffmaned_value(&ssss_table, &mut image_bits.iter());
+        assert_eq!(pixel_diff.unwrap(), -2);
     }
 
     #[test]
@@ -772,15 +740,13 @@ mod tests {
             min_code_length: 2,
             max_code_length: 16,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let mut bit_read_index = 1_usize;
-        let pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
-        assert_eq!(pixel_diff, 32768);
-        assert_eq!(bit_read_index, 3);
+        let image_bits: Vec<u8> = Vec::from([1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let pixel_diff = get_huffmaned_value(&ssss_table, &mut image_bits.iter());
+        assert_eq!(pixel_diff.unwrap(), 32768);
     }
 
     #[test]
-    #[should_panic(expected = "No matching Huffman code was found for a lossless tile jpeg.")]
+    // #[should_panic(expected = "No matching Huffman code was found for a lossless tile jpeg.")]
     fn get_huffmaned_value_panic() {
         let ssss_table = SSSSTable {
             t_c: 0,
@@ -802,28 +768,10 @@ mod tests {
         let image_bits: Vec<u8> = Vec::from([
             1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1,
         ]);
-        let mut bit_read_index = 1_usize;
-        let _pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
+        let pixel_diff = get_huffmaned_value(&ssss_table, &mut image_bits.iter());
+        println!("{:?}", pixel_diff);
+        assert_eq!(pixel_diff.unwrap_err().to_string(), HuffmanDecodingError::Default.to_string());
     }
-
-    //     // fn get_ContextContext<'a>() -> ContextContext + 'a {
-    //     //     let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
-    //     //     let components: usize = 2;
-    //     //     let width: usize = 4;
-    //     //     let image_index: usize = 11;
-    //     //     let Ah: u8 = 2;
-    //     //     let P: u8 = 8;
-
-    //     //     ContextContext {
-    //     //         component: image_index % components,
-    //     //         x: (image_index / components) % width,
-    //     //         y: (image_index / components) / width,
-    //     //         width: &width,
-    //     //         point_tranform: &Ah,
-    //     //         P: &P,
-    //     //         img: &img,
-    //     //     }
-    //     // }
 
     #[test]
     fn get_image_data_without_stuffed_zero_bytes_good_reguar_number_then_marker() {
@@ -897,13 +845,10 @@ mod tests {
 
     #[test]
     fn contextcontext_a_good() {
-        // let context = get_ContextContext();
         let img = Vec::from([
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211,
             212,
         ]);
-        // 1, 2, 3, 4, 5, 6, 7, 8,
-        // 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212
         let components: usize = 2;
         let width: usize = 4;
         let image_index: usize = 10;
@@ -928,7 +873,6 @@ mod tests {
 
     #[test]
     fn contextcontext_b_good() {
-        // let context = get_ContextContext();
         let img = Vec::from([
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211,
             212,
@@ -957,14 +901,10 @@ mod tests {
 
     #[test]
     fn contextcontext_c_good() {
-        // let context = get_ContextContext();
         let img = Vec::from([
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211,
             212,
         ]);
-        // 1, 2, 3, 4, 5, 6, 7, 8,
-        // 9, 10, 11, 12, 21, 22, 23, 24,
-        // 25, 26, 27, 28, 29, 210, 211, 212
         let components: usize = 2;
         let width: usize = 4;
         let image_index: usize = 10;
@@ -989,14 +929,10 @@ mod tests {
 
     #[test]
     fn contextcontext_ix_good() {
-        // let context = get_ContextContext();
         let img = Vec::from([
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211,
             212,
         ]);
-        // 1, 2, 3, 4, 5, 6, 7, 8,
-        // 9, 10, 11, 12, 21, 22, 23, 24,
-        // 25, 26, 27, 28, 29, 210, 211, 212
         let components: usize = 2;
         let width: usize = 4;
         let image_index: usize = 10;
@@ -1579,12 +1515,9 @@ mod tests {
         let mut encoded_image = encoded_image.iter();
 
         let expected = 0x08_u8;
-        // let mut expected = expected.iter();
 
         assert!(is_jpeg(&mut encoded_image).is_ok());
         assert_eq!(encoded_image.next().unwrap(), &expected);
-
-        // assert_eq!(is_jpeg(encoded_image).next(), expected.next());
     }
 
     // #[test]
