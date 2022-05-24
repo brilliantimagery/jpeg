@@ -18,23 +18,23 @@ struct ContextContext<'a> {
 }
 
 impl ContextContext<'_> {
-    fn r_a(&self) -> u32 {
+    fn r_a(&self) -> i32 {
         self.img[(self.x_position - 1) * self.numb_of_components
             + self.y_position * self.width * self.numb_of_components
-            + self.component]
+            + self.component] as i32
     }
-    fn r_b(&self) -> u32 {
+    fn r_b(&self) -> i32 {
         self.img[self.x_position * self.numb_of_components
             + (self.y_position - 1) * self.width * self.numb_of_components
-            + self.component]
+            + self.component] as i32
     }
-    fn r_c(&self) -> u32 {
+    fn r_c(&self) -> i32 {
         self.img[(self.x_position - 1) * self.numb_of_components
             + (self.y_position - 1) * self.width * self.numb_of_components
-            + self.component]
+            + self.component] as i32
     }
-    fn r_ix(&self) -> u32 {
-        1 << (self.p_ - self.point_tranform - 1)
+    fn r_ix(&self) -> i32 {
+        1 << (self.p_ - self.point_tranform - 1) as i32
     }
 }
 
@@ -93,22 +93,26 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
     while encoded_image.len() > 0 {
         match bytes_to_int_two_peeked(&mut encoded_image)? {
             marker if marker == SOF3 as u16 => {
+                encoded_image.next();
                 frame_header = parse_frame_header(&mut encoded_image)?;
             }
             marker if marker == DHT as u16 => {
+                encoded_image.next();
                 let huffman_info = get_huffman_info(&mut encoded_image)?;
                 ssss_tables.insert(huffman_info.t_h as usize, huffman_info);
             }
             marker if marker == SOS as u16 => {
-                let scan_header_info = parse_scan_header(&mut encoded_image)?;
+                encoded_image.next();
+                let scan_header = parse_scan_header(&mut encoded_image)?;
                 raw_image = decode_image(
                     &mut encoded_image,
                     &frame_header,
-                    scan_header_info,
+                    &scan_header,
                     &ssss_tables,
                 );
             }
             marker if APP as u16 <= marker && marker <= APPn as u16 => {
+                encoded_image.next();
                 skip_app_marker(&mut encoded_image)?;
             }
             marker if marker == EOI as u16 => {
@@ -116,7 +120,7 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
             }
             marker if marker > 0xFF00 && marker < 0xFFFF => panic!("Unimplimented marker!"),
             _ => {
-                // encoded_image.next();
+                // Either ended up in random stuff or 0xFFFF which means that the first FF can be discarded (10918-1, P. 82)
             }
         }
     }
@@ -404,10 +408,11 @@ fn bytes_to_int_two_peeked(bytes: &mut Iter<u8>) -> Result<u16, OutOfBoundsError
 }
 
 /// TODO: THIS SEEMS TO BE WEHRE I'VE LEFT OFF
+/// 10918-1, H.2, P. 136 & H.1, P. 132
 fn decode_image(
-    mut encoded_image: &mut Iter<u8>,
+    encoded_image: &mut Iter<u8>,
     frame_header: &FrameHeader,
-    scan_header: ScanHeader,
+    scan_header: &ScanHeader,
     ssss_tables: &HashMap<usize, SSSSTable>,
 ) -> Vec<u32> {
     let width = frame_header.x_ as usize;
@@ -422,7 +427,7 @@ fn decode_image(
     let image_bits = get_image_data_without_stuffed_zero_bytes(encoded_image).unwrap();
     let mut bit_read_index: usize = 0;
 
-    while bit_read_index < image_bits.len() {
+    while write_index < raw_image.len() {
         // let image_index = read_index - image_start_index;
         let component = write_index % numb_of_components;
         let context = ContextContext {
@@ -442,6 +447,12 @@ fn decode_image(
             &mut bit_read_index,
         );
         raw_image.push(((p_x as i32 + pixel_delta) & ((1 << frame_header.p_) - 1)) as u32);
+        // dbg!(&raw_image);
+        if write_index % 1_000 == 0 {
+            println!("{:?}, {:?}", write_index, raw_image[write_index]);
+        }
+        // println!("{:?}, {:?}", write_index, raw_image[write_index]);
+        write_index += 1;
     }
 
     raw_image
@@ -458,16 +469,23 @@ fn get_prediction(context: ContextContext, mut predictor: u8) -> u32 {
         predictor = 1;
     }
 
+    // if context.x_position == 1 && context.y_position == 1 {
+    //     let a = context.r_a();
+    //     let b = context.r_b();
+    //     let c = context.r_c();
+    //     let d = 5;
+    // }
+
     match predictor {
         0 => 0,
-        1 => context.r_a(),
-        2 => context.r_b(),
-        3 => context.r_c(),
-        4 => context.r_a() + context.r_b() - context.r_c(),
-        5 => context.r_a() + ((context.r_b() - context.r_c()) >> 1),
-        6 => context.r_b() + ((context.r_a() - context.r_c()) >> 1),
-        7 => (context.r_a() + context.r_b()) / 2,
-        8 => context.r_ix(),
+        1 => context.r_a() as u32,
+        2 => context.r_b() as u32,
+        3 => context.r_c() as u32,
+        4 => (context.r_a() + context.r_b() - context.r_c()) as u32,
+        5 => (context.r_a() + ((context.r_b() - context.r_c()) >> 1)) as u32,
+        6 => (context.r_b() + ((context.r_a() - context.r_c()) >> 1)) as u32,
+        7 => ((context.r_a() + context.r_b()) / 2) as u32,
+        8 => context.r_ix() as u32,
         _ => 0,
     }
 }
