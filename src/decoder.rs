@@ -1,7 +1,6 @@
-#[allow(dead_code)]
-
+#![allow(dead_code)]
 use std::backtrace::Backtrace;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap, HashMap};
 use std::slice::Iter;
 
 use crate::jpeg_utils::Marker;
@@ -24,71 +23,84 @@ pub struct MissingInfoError;
 
 struct ContextContext<'a> {
     component: &'a usize,
-    x_position: usize,              
+    x_position: usize,
     y_position: usize,
     width: &'a usize,
     numb_of_components: &'a usize,
-    point_tranform: &'a u8, 
-    p_: &'a u8,                     // Sample precision
+    point_tranform: &'a u8,
+    p_: &'a u8, // Sample precision
     img: &'a Vec<u32>,
 }
 
 impl ContextContext<'_> {
-    fn r_a (&self) -> u32 {
-        self.img[(self.x_position-1) * self.numb_of_components + self.y_position * self.width * self.numb_of_components + self.component]
+    fn r_a(&self) -> u32 {
+        self.img[(self.x_position - 1) * self.numb_of_components
+            + self.y_position * self.width * self.numb_of_components
+            + self.component]
     }
-    fn r_b (&self) -> u32 {
-        self.img[self.x_position * self.numb_of_components + (self.y_position - 1) * self.width * self.numb_of_components + self.component]
+    fn r_b(&self) -> u32 {
+        self.img[self.x_position * self.numb_of_components
+            + (self.y_position - 1) * self.width * self.numb_of_components
+            + self.component]
     }
-    fn r_c (&self) -> u32 {
-        self.img[(self.x_position-1) * self.numb_of_components + (self.y_position - 1) * self.width * self.numb_of_components + self.component]
+    fn r_c(&self) -> u32 {
+        self.img[(self.x_position - 1) * self.numb_of_components
+            + (self.y_position - 1) * self.width * self.numb_of_components
+            + self.component]
     }
-    fn r_ix (&self) -> u32 {
+    fn r_ix(&self) -> u32 {
         1 << (self.p_ - self.point_tranform - 1)
     }
 }
 
 struct Component {
-    c_: u8,             // Component identifier, 10918-1 P. 36
-    h_: u8,             // Horizontal sampling factor
-    v_: u8,             // Vertical sampling factor
-    t_q: u8,            // Quantiziation table destination selector; Not used (0), for lossless
+    c_: u8,  // Component identifier, 10918-1 P. 36
+    h_: u8,  // Horizontal sampling factor
+    v_: u8,  // Vertical sampling factor
+    t_q: u8, // Quantiziation table destination selector; Not used (0), for lossless
 }
 
-struct FrameHeader {    // Frame Header, 10918-1, B.2.2, P. 35
-    p_: u8,             // Sample precision
-    y_: u16,            // Number of lines
-    x_: u16,            // Number of samples per line
+struct FrameHeader {
+    // Frame Header, 10918-1, B.2.2, P. 35
+    p_: u8,  // Sample precision
+    y_: u16, // Number of lines
+    x_: u16, // Number of samples per line
     components: HashMap<u8, Component>,
 }
 
-struct ScanHeader {     // Scan Header, 10918-1, B.2.3, P. 35
+struct ScanHeader {
+    // Scan Header, 10918-1, B.2.3, P. 35
     head_params: HashMap<u8, HeaderParameter>,
-    s_s: u8,            // Start of Spectral selection; predictor selector in lossless
-    s_e: u8,            // End of Spectral or prediction selection; 0, not used, in lossless
-    a_h: u8,            // Successive aproximamtion bit position high, 0, not used, in lossless
-    a_l: u8,            // Successive approximation bit position low; point transform, Pt, for lossless mode
+    s_s: u8, // Start of Spectral selection; predictor selector in lossless
+    s_e: u8, // End of Spectral or prediction selection; 0, not used, in lossless
+    a_h: u8, // Successive aproximamtion bit position high, 0, not used, in lossless
+    a_l: u8, // Successive approximation bit position low; point transform, Pt, for lossless mode
 }
 
 struct HeaderParameter {
-    c_s: u8,            // Scan component selector
-    t_d: u8,            // DC entropy coding table destination selector
-    t_a: u8,            // AC entropy coding table destination selector
+    c_s: u8, // Scan component selector
+    t_d: u8, // DC entropy coding table destination selector
+    t_a: u8, // AC entropy coding table destination selector
 }
 
 struct SSSSTable {
-    t_c: u8,            // Table class – 0 = DC table or lossless table, 1 = AC table
-    t_h: u8,            // Huffman table destination identifier
+    t_c: u8, // Table class – 0 = DC table or lossless table, 1 = AC table
+    t_h: u8, // Huffman table destination identifier
     table: HashMap<u32, u8>,
-    min_code_length: usize,     // number of bits of shorted Huffman code
-    max_code_length: usize,     // number of bits of longest Huffman code
+    min_code_length: usize, // number of bits of shorted Huffman code
+    max_code_length: usize, // number of bits of longest Huffman code
 }
 
 pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
     let mut encoded_image = encoded_image.iter();
     is_jpeg(&mut encoded_image)?;
 
-    let mut frame_header: FrameHeader = FrameHeader {p_:0, x_:0, y_:0, components:HashMap::new()};
+    let mut frame_header: FrameHeader = FrameHeader {
+        p_: 0,
+        x_: 0,
+        y_: 0,
+        components: HashMap::new(),
+    };
     let mut ssss_tables: HashMap<usize, SSSSTable> = HashMap::new();
     let mut raw_image: Vec<u32> = Vec::new();
 
@@ -97,25 +109,29 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
         match bytes_to_int_two_peeked(&mut encoded_image) {
             marker if marker == SOF3 as u16 => {
                 frame_header = parse_frame_header(&mut encoded_image);
-            },
+            }
             marker if marker == DHT as u16 => {
                 let huffman_info = get_huffman_info(&mut encoded_image);
                 ssss_tables.insert(huffman_info.t_h as usize, huffman_info);
-            },
+            }
             marker if marker == SOS as u16 => {
                 let scan_header_info = parse_scan_header(&mut encoded_image);
-                raw_image = decode_image(&mut encoded_image,
-                    &frame_header, 
-                    scan_header_info, 
-                    &ssss_tables);
-            },
+                raw_image = decode_image(
+                    &mut encoded_image,
+                    &frame_header,
+                    scan_header_info,
+                    &ssss_tables,
+                );
+            }
             marker if APP as u16 <= marker && marker <= APPn as u16 => {
                 skip_app_marker(&mut encoded_image);
             }
-            marker if marker == EOI as u16 => { break; }
+            marker if marker == EOI as u16 => {
+                break;
+            }
             marker if marker > 0xFF00 && marker < 0xFFFF => panic!("Unimplimented marker!"),
             _ => {
-                encoded_image.next();
+                // encoded_image.next();
             }
         }
     }
@@ -127,13 +143,12 @@ fn skip_app_marker(mut encoded_image: &mut Iter<u8>) {
     let l_p = bytes_to_int_two_consumed(&mut encoded_image);
 
     // TODO: this is ugly should should use skip or something
-
     for _ in 0..l_p {
         encoded_image.next();
     }
 }
 
-fn get_huffman_info(mut encoded_image: &mut Iter<u8>) -> SSSSTable {
+fn get_huffman_info(encoded_image: &mut Iter<u8>) -> SSSSTable {
     let (t_c, t_h, code_lengths) = parse_huffman_info(encoded_image);
 
     let (table, min_code_length, max_code_length) = make_ssss_table(code_lengths);
@@ -163,7 +178,8 @@ fn parse_huffman_info(encoded_image: &mut Iter<u8>) -> (u8, u8, [[Option<u8>; 16
     }
     for (code_length_index, l_i) in lengths.iter() {
         for i in 0..*l_i {
-            code_lengths[*code_length_index as usize][i as usize] = Some(*encoded_image.next().unwrap());
+            code_lengths[*code_length_index as usize][i as usize] =
+                Some(*encoded_image.next().unwrap());
         }
     }
 
@@ -188,7 +204,7 @@ fn make_ssss_table(code_lengths: [[Option<u8>; 16]; 16]) -> (HashMap<u32, u8>, u
     //                                     /   \
     // Index 0, Code Length 1, Codes:     0     1
     // Value:                            NA    NA
-    //                                   /\    / \   
+    //                                   /\    / \
     // Index 1, Code Length 2, Codes:  00 01  10 11
     // Value:                           0  1   2 NA
     //                                           / \
@@ -196,7 +212,7 @@ fn make_ssss_table(code_lengths: [[Option<u8>; 16]; 16]) -> (HashMap<u32, u8>, u
     // Value:                                   3   NA
     //                                              / \
     // Index 3: Code Length 4, Codes:            1110  1111
-    // Values:                                      4   NA 
+    // Values:                                      4   NA
     // NOTE: padded/leading 1 not shown so all above codes would be stored with an
     // additional 1 in front of it.
 
@@ -236,28 +252,27 @@ fn make_ssss_table(code_lengths: [[Option<u8>; 16]; 16]) -> (HashMap<u32, u8>, u
     //     }
     // }
 
-
     // storing the huffman code in the bits of a u32
     // the code is preceided by a 1 so there can be leading zeros
     let mut code: u32 = 1;
     let mut table: HashMap<u32, u8> = HashMap::new();
-    for index in 0..16 {
+    for (index, row) in code_lengths.iter().enumerate() {
         // the code lengths (number of bytes) are stored in a HashMap that was initized with 0xFF
         // and the codes only go up to 16,
         // so if the first cell has 0xFF then there are no codes with a length
         // equal to that row's index
         // so remove the rows that still have the initial value, 0xFF
         // since, as previously discussed, there aren't any codes of that length
-        // if code_lengths[index][0] < 0xFF_u8 {
-        if code_lengths[index][0].is_some() {
-            // filter out the values that have 0xFF since those are initial values
-            // and don't have a valid code length
-            let values: Vec<u8> = code_lengths[index]
-                .into_iter()
-                // .filter(|x| x < &0xFF_u8)
-                .filter(|x| x.is_some())
-                .map(|x| x.unwrap())
-                .collect::<Vec<u8>>();
+
+        // probably slower than the following but it's cleaner so... if row[0].is_some() {
+        // filter out the values that have 0xFF since those are initial values
+        // and don't have a valid code length
+        let values = row
+            .into_iter()
+            .filter(|x| x.is_some())
+            .map(|x| x.unwrap())
+            .collect::<Vec<u8>>();
+        if values.len() > 0 {
             // for each code lengh start with the 0th code of that length
             let mut values_w_n_bits: usize = 0;
             // once all codes of a length have been processed,
@@ -268,10 +283,10 @@ fn make_ssss_table(code_lengths: [[Option<u8>; 16]; 16]) -> (HashMap<u32, u8>, u
                 // number_of_used_bits(&code) - 1 is the present code length since the leading/padded one takes up a bit
                 // the desired code length - the present code length is the amount it must grow to achieve the desired length
                 code = code << (index + 1 - (number_of_used_bits(&code) - 1));
-                // While the first code of a langth "automatically" works, 
-                // additionl codes of a length must have bits flipped 
+                // While the first code of a langth "automatically" works,
+                // additionl codes of a length must have bits flipped
                 if values_w_n_bits > 0 {
-                    // Remove bits (move up the tree) until you remove a 0 
+                    // Remove bits (move up the tree) until you remove a 0
                     // (so you can move to the right branch from the left)
                     // Or until you hit the top (again, so you can move to the right branch)
                     loop {
@@ -337,7 +352,8 @@ fn parse_scan_header(mut encoded_image: &mut Iter<u8>) -> ScanHeader {
                 c_s,
                 t_d: t_d_a >> 4,
                 t_a: t_d_a & 0xF,
-            });
+            },
+        );
     }
     let s_s = *encoded_image.next().unwrap();
     let s_e = *encoded_image.next().unwrap();
@@ -371,8 +387,9 @@ fn parse_frame_header(mut encoded_image: &mut Iter<u8>) -> FrameHeader {
                 c_,
                 h_: h_v >> 4,
                 v_: h_v & 0xF,
-                t_q
-            });
+                t_q,
+            },
+        );
     }
 
     FrameHeader {
@@ -384,32 +401,33 @@ fn parse_frame_header(mut encoded_image: &mut Iter<u8>) -> FrameHeader {
 }
 
 fn is_jpeg(mut encoded_image: &mut Iter<u8>) -> Result<(), BadMagicNumberError> {
-    // if bytes_to_int_two(encoded_image.next(), encoded_image.next()) != SOI {
     if bytes_to_int_two_consumed(&mut encoded_image) == Marker::SOI as u16 {
         Ok(())
     } else {
         Err(BadMagicNumberError)
     }
-    // if bytes_to_int_two(encoded_image.next(), encoded_image.next()) != SOI {
-    //     panic!("This doesn't seem to be a JPEG.");
-    // }
 }
 
-// fn bytes_to_int_two(mut byte_0: Option<&u8>, mut byte_1: Option<&u8>) -> u16 {
-//     (*byte_0.unwrap() as u16) << 8 | *byte_1.unwrap() as u16
-// }
 fn bytes_to_int_two_consumed(bytes: &mut Iter<u8>) -> u16 {
     (*bytes.next().unwrap() as u16) << 8 | *bytes.next().unwrap() as u16
 }
 
 fn bytes_to_int_two_peeked(bytes: &mut Iter<u8>) -> u16 {
-    let mut bytes = bytes.by_ref().peekable();
-    (*bytes.next().unwrap() as u16) << 8 | **bytes.peek().unwrap() as u16
+    // let mut bytes = bytes.by_ref().peekable();
+    // (*bytes.next().unwrap() as u16) << 8 | **bytes.peek().unwrap() as u16
+    let mut bytes_clone = bytes.clone();
+    bytes.next();
+    (*bytes_clone.next().unwrap() as u16) << 8 | *bytes_clone.next().unwrap() as u16
 }
 
-fn decode_image(mut encoded_image: &mut Iter<u8>, frame_header: &FrameHeader, scan_header: 
-    ScanHeader, ssss_tables: &HashMap<usize, SSSSTable>) -> Vec<u32> {
 
+/// TODO: THIS SEEMS TO BE WEHRE I'VE LEFT OFF
+fn decode_image(
+    mut encoded_image: &mut Iter<u8>,
+    frame_header: &FrameHeader,
+    scan_header: ScanHeader,
+    ssss_tables: &HashMap<usize, SSSSTable>,
+) -> Vec<u32> {
     let width = frame_header.x_ as usize;
     let height = frame_header.y_ as usize;
 
@@ -431,20 +449,23 @@ fn decode_image(mut encoded_image: &mut Iter<u8>, frame_header: &FrameHeader, sc
             y_position: (write_index / numb_of_components) / width,
             width: &width,
             numb_of_components: &&numb_of_components,
-            point_tranform: &scan_header.a_h, 
-            p_: &frame_header.p_, 
+            point_tranform: &scan_header.a_h,
+            p_: &frame_header.p_,
             img: &raw_image,
         };
         let p_x = get_prediction(context, scan_header.s_s);
-        let pixel_delta= get_huffmaned_value(ssss_tables.get(&component).unwrap(), &image_bits, &mut bit_read_index);
+        let pixel_delta = get_huffmaned_value(
+            ssss_tables.get(&component).unwrap(),
+            &image_bits,
+            &mut bit_read_index,
+        );
         raw_image.push(((p_x as i32 + pixel_delta) & ((1 << frame_header.p_) - 1)) as u32);
     }
 
     raw_image
 }
 
-fn  get_prediction(context: ContextContext, mut predictor: u8) -> u32 {
-
+fn get_prediction(context: ContextContext, mut predictor: u8) -> u32 {
     if context.x_position == 0 {
         if context.y_position == 0 {
             predictor = 8;
@@ -452,7 +473,7 @@ fn  get_prediction(context: ContextContext, mut predictor: u8) -> u32 {
             predictor = 2;
         }
     } else if context.y_position == 0 {
-        predictor = 1;        
+        predictor = 1;
     }
 
     match predictor {
@@ -460,12 +481,12 @@ fn  get_prediction(context: ContextContext, mut predictor: u8) -> u32 {
         1 => context.r_a(),
         2 => context.r_b(),
         3 => context.r_c(),
-        4 => { context.r_a() + context.r_b() - context.r_c() },
+        4 => context.r_a() + context.r_b() - context.r_c(),
         5 => context.r_a() + ((context.r_b() - context.r_c()) >> 1),
         6 => context.r_b() + ((context.r_a() - context.r_c()) >> 1),
         7 => (context.r_a() + context.r_b()) / 2,
         8 => context.r_ix(),
-        _ => 0
+        _ => 0,
     }
 }
 
@@ -473,13 +494,13 @@ fn get_image_data_without_stuffed_zero_bytes(encoded_image: &mut Iter<u8>) -> Ve
     // See JPG document 10918-1 P33 B.1.1.5 Note 2
     let mut image_data: Vec<u8> = Vec::with_capacity(encoded_image.len());
     let mut image = encoded_image.clone();
-    
+
     let mut this_byte = image.next();
     let mut next_byte = image.next();
     let mut i = 0;
     while this_byte.is_some() {
         let this_val = *this_byte.unwrap();
-        let next_val = *next_byte.unwrap_or(&0);       
+        let next_val = *next_byte.unwrap_or(&0);
         if this_val < 0xFF {
             // if the current element is less then 0xFF the proceide as usual
             image_data.push(this_val);
@@ -506,21 +527,36 @@ fn get_image_data_without_stuffed_zero_bytes(encoded_image: &mut Iter<u8>) -> Ve
 
     let mut bits: Vec<u8> = Vec::with_capacity(i * 8);
 
-    for i in 0..i {
-        bits.push((image_data[i] >> 7) & 1);
-        bits.push((image_data[i] >> 6) & 1);
-        bits.push((image_data[i] >> 5) & 1);
-        bits.push((image_data[i] >> 4) & 1);
-        bits.push((image_data[i] >> 3) & 1);
-        bits.push((image_data[i] >> 2) & 1);
-        bits.push((image_data[i] >> 1) & 1);
-        bits.push((image_data[i] >> 0) & 1);
+    // for i in 0..i {
+    //     bits.push((image_data[i] >> 7) & 1);
+    //     bits.push((image_data[i] >> 6) & 1);
+    //     bits.push((image_data[i] >> 5) & 1);
+    //     bits.push((image_data[i] >> 4) & 1);
+    //     bits.push((image_data[i] >> 3) & 1);
+    //     bits.push((image_data[i] >> 2) & 1);
+    //     bits.push((image_data[i] >> 1) & 1);
+    //     bits.push((image_data[i] >> 0) & 1);
+    // }
+
+    for i in image_data.iter().take(i) {
+        bits.push((i >> 7) & 1);
+        bits.push((i >> 6) & 1);
+        bits.push((i >> 5) & 1);
+        bits.push((i >> 4) & 1);
+        bits.push((i >> 3) & 1);
+        bits.push((i >> 2) & 1);
+        bits.push((i >> 1) & 1);
+        bits.push((i >> 0) & 1);
     }
 
     bits
 }
 
-fn get_huffmaned_value(ssss_table: &SSSSTable, image_bits: &Vec<u8>, mut bit_read_index: &mut usize) -> i32 {
+fn get_huffmaned_value(
+    ssss_table: &SSSSTable,
+    image_bits: &Vec<u8>,
+    bit_read_index: &mut usize,
+) -> i32 {
     let mut ssss: u8 = 0xFF;
     let mut guess: u32 = 1;
 
@@ -545,7 +581,7 @@ fn get_huffmaned_value(ssss_table: &SSSSTable, image_bits: &Vec<u8>, mut bit_rea
             panic!("No matching Huffman code was found for a lossless tile jpeg.")
             // warnings.warn('A Huffman coding error was found in a lossless jpeg in a dng; it may'
             //               + ' have been resolved, there may be corrupted data')
-        },
+        }
         16 => 32768,
         _ => {
             let mut pixel_diff: u16 = 0;
@@ -583,7 +619,6 @@ mod tests {
     use super::*;
 
     fn get_file_as_byte_iter(path: &Path) -> Vec<u8> {
-        
         let mut file = File::open(path).expect("The test file wasn't where it was expected.");
         let mut encoded_image = Vec::from([]);
         file.read_to_end(&mut encoded_image);
@@ -629,11 +664,21 @@ mod tests {
         let ssss_table = SSSSTable {
             t_c: 0,
             t_h: 0,
-            table: HashMap::from([(4, 0), (30, 4), (6, 2), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            table: HashMap::from([
+                (4, 0),
+                (30, 4),
+                (6, 2),
+                (126, 6),
+                (254, 7),
+                (510, 8),
+                (14, 3),
+                (5, 1),
+                (62, 5),
+            ]),
             min_code_length: 2,
             max_code_length: 8,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, ]);
+        let image_bits: Vec<u8> = Vec::from([1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
         let mut bit_read_index = 1_usize;
         let pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
         assert_eq!(pixel_diff, 0);
@@ -645,11 +690,21 @@ mod tests {
         let ssss_table = SSSSTable {
             t_c: 0,
             t_h: 0,
-            table: HashMap::from([(4, 0), (30, 4), (6, 2), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            table: HashMap::from([
+                (4, 0),
+                (30, 4),
+                (6, 2),
+                (126, 6),
+                (254, 7),
+                (510, 8),
+                (14, 3),
+                (5, 1),
+                (62, 5),
+            ]),
             min_code_length: 2,
             max_code_length: 8,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, ]);
+        let image_bits: Vec<u8> = Vec::from([1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
         let mut bit_read_index = 1_usize;
         let pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
         assert_eq!(pixel_diff, 1);
@@ -661,11 +716,21 @@ mod tests {
         let ssss_table = SSSSTable {
             t_c: 0,
             t_h: 0,
-            table: HashMap::from([(4, 0), (30, 4), (6, 2), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            table: HashMap::from([
+                (4, 0),
+                (30, 4),
+                (6, 2),
+                (126, 6),
+                (254, 7),
+                (510, 8),
+                (14, 3),
+                (5, 1),
+                (62, 5),
+            ]),
             min_code_length: 2,
             max_code_length: 8,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, ]);
+        let image_bits: Vec<u8> = Vec::from([1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
         let mut bit_read_index = 1_usize;
         let pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
         assert_eq!(pixel_diff, -1);
@@ -677,11 +742,21 @@ mod tests {
         let ssss_table = SSSSTable {
             t_c: 0,
             t_h: 0,
-            table: HashMap::from([(4, 0), (30, 4), (6, 2), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            table: HashMap::from([
+                (4, 0),
+                (30, 4),
+                (6, 2),
+                (126, 6),
+                (254, 7),
+                (510, 8),
+                (14, 3),
+                (5, 1),
+                (62, 5),
+            ]),
             min_code_length: 2,
             max_code_length: 8,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, ]);
+        let image_bits: Vec<u8> = Vec::from([1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
         let mut bit_read_index = 1_usize;
         let pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
         assert_eq!(pixel_diff, 3);
@@ -693,11 +768,21 @@ mod tests {
         let ssss_table = SSSSTable {
             t_c: 0,
             t_h: 0,
-            table: HashMap::from([(4, 0), (30, 4), (6, 2), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            table: HashMap::from([
+                (4, 0),
+                (30, 4),
+                (6, 2),
+                (126, 6),
+                (254, 7),
+                (510, 8),
+                (14, 3),
+                (5, 1),
+                (62, 5),
+            ]),
             min_code_length: 2,
             max_code_length: 8,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, ]);
+        let image_bits: Vec<u8> = Vec::from([1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
         let mut bit_read_index = 1_usize;
         let pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
         assert_eq!(pixel_diff, -3);
@@ -709,11 +794,21 @@ mod tests {
         let ssss_table = SSSSTable {
             t_c: 0,
             t_h: 0,
-            table: HashMap::from([(4, 0), (30, 4), (6, 16), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            table: HashMap::from([
+                (4, 0),
+                (30, 4),
+                (6, 16),
+                (126, 6),
+                (254, 7),
+                (510, 8),
+                (14, 3),
+                (5, 1),
+                (62, 5),
+            ]),
             min_code_length: 2,
             max_code_length: 16,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, ]);
+        let image_bits: Vec<u8> = Vec::from([1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
         let mut bit_read_index = 1_usize;
         let pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
         assert_eq!(pixel_diff, 32768);
@@ -726,39 +821,54 @@ mod tests {
         let ssss_table = SSSSTable {
             t_c: 0,
             t_h: 0,
-            table: HashMap::from([(4, 0), (30, 4), (6, 16), (126, 6), (254, 7), (510, 8), (14, 3), (5, 1), (62, 5)]),
+            table: HashMap::from([
+                (4, 0),
+                (30, 4),
+                (6, 16),
+                (126, 6),
+                (254, 7),
+                (510, 8),
+                (14, 3),
+                (5, 1),
+                (62, 5),
+            ]),
             min_code_length: 2,
             max_code_length: 8,
         };
-        let image_bits: Vec<u8> = Vec::from([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
+        let image_bits: Vec<u8> = Vec::from([
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1,
+        ]);
         let mut bit_read_index = 1_usize;
         let _pixel_diff = get_huffmaned_value(&ssss_table, &image_bits, &mut bit_read_index);
     }
 
-//     // fn get_ContextContext<'a>() -> ContextContext + 'a {
-//     //     let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
-//     //     let components: usize = 2;
-//     //     let width: usize = 4;
-//     //     let image_index: usize = 11;
-//     //     let Ah: u8 = 2;
-//     //     let P: u8 = 8;
+    //     // fn get_ContextContext<'a>() -> ContextContext + 'a {
+    //     //     let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
+    //     //     let components: usize = 2;
+    //     //     let width: usize = 4;
+    //     //     let image_index: usize = 11;
+    //     //     let Ah: u8 = 2;
+    //     //     let P: u8 = 8;
 
-//     //     ContextContext {
-//     //         component: image_index % components,
-//     //         x: (image_index / components) % width,
-//     //         y: (image_index / components) / width,
-//     //         width: &width,
-//     //         point_tranform: &Ah, 
-//     //         P: &P,
-//     //         img: &img,
-//     //     }
-//     // }
+    //     //     ContextContext {
+    //     //         component: image_index % components,
+    //     //         x: (image_index / components) % width,
+    //     //         y: (image_index / components) / width,
+    //     //         width: &width,
+    //     //         point_tranform: &Ah,
+    //     //         P: &P,
+    //     //         img: &img,
+    //     //     }
+    //     // }
 
     #[test]
     fn get_image_data_without_stuffed_zero_bytes_good_reguar_number_then_marker() {
         let encoded_image: Vec<u8> = Vec::from([0x00, 0xFE, 0x00, 0xFF, 0x00, 0x05, 0xFF, 0xDA]);
-        let expected_bits: Vec<u8> = Vec::from([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
-  
+        let expected_bits: Vec<u8> = Vec::from([
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+            1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1,
+        ]);
+
         let mut encoded_image = encoded_image.iter();
 
         let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
@@ -772,8 +882,11 @@ mod tests {
     #[test]
     fn get_image_data_without_stuffed_zero_bytes_good_padding_then_marker() {
         let encoded_image: Vec<u8> = Vec::from([0x00, 0xFE, 0x00, 0xFF, 0x00, 0xFF, 0xDA]);
-        let expected_bits: Vec<u8> = Vec::from([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]);
-  
+        let expected_bits: Vec<u8> = Vec::from([
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+            1, 1, 1,
+        ]);
+
         let mut encoded_image = encoded_image.iter();
 
         let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
@@ -787,8 +900,11 @@ mod tests {
     #[test]
     fn get_image_data_without_stuffed_zero_bytes_good_reguar_number_with_no_marker() {
         let encoded_image: Vec<u8> = Vec::from([0x00, 0xFE, 0x00, 0xFF, 0x00, 0x05]);
-        let expected_bits: Vec<u8> = Vec::from([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1]);
-  
+        let expected_bits: Vec<u8> = Vec::from([
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+            1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1,
+        ]);
+
         let mut encoded_image = encoded_image.iter();
 
         let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
@@ -801,8 +917,11 @@ mod tests {
     #[test]
     fn get_image_data_without_stuffed_zero_bytes_good_padding_with_no_marker() {
         let encoded_image: Vec<u8> = Vec::from([0x00, 0xFE, 0x00, 0xFF, 0x00]);
-        let expected_bits: Vec<u8> = Vec::from([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]);
-  
+        let expected_bits: Vec<u8> = Vec::from([
+            0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+            1, 1, 1,
+        ]);
+
         let mut encoded_image = encoded_image.iter();
 
         let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
@@ -815,8 +934,11 @@ mod tests {
     #[test]
     fn contextcontext_a_good() {
         // let context = get_ContextContext();
-        let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
-        // 1, 2, 3, 4, 5, 6, 7, 8, 
+        let img = Vec::from([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211,
+            212,
+        ]);
+        // 1, 2, 3, 4, 5, 6, 7, 8,
         // 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212
         let components: usize = 2;
         let width: usize = 4;
@@ -830,7 +952,7 @@ mod tests {
             y_position: (image_index / components) / width,
             width: &width,
             numb_of_components: &components,
-            point_tranform: &a_h, 
+            point_tranform: &a_h,
             p_: &p_,
             img: &img,
         };
@@ -843,7 +965,10 @@ mod tests {
     #[test]
     fn contextcontext_b_good() {
         // let context = get_ContextContext();
-        let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
+        let img = Vec::from([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211,
+            212,
+        ]);
         let components: usize = 2;
         let width: usize = 4;
         let image_index: usize = 10;
@@ -856,7 +981,7 @@ mod tests {
             y_position: (image_index / components) / width,
             width: &width,
             numb_of_components: &components,
-            point_tranform: &a_h, 
+            point_tranform: &a_h,
             p_: &p_,
             img: &img,
         };
@@ -869,9 +994,12 @@ mod tests {
     #[test]
     fn contextcontext_c_good() {
         // let context = get_ContextContext();
-        let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
-        // 1, 2, 3, 4, 5, 6, 7, 8, 
-        // 9, 10, 11, 12, 21, 22, 23, 24, 
+        let img = Vec::from([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211,
+            212,
+        ]);
+        // 1, 2, 3, 4, 5, 6, 7, 8,
+        // 9, 10, 11, 12, 21, 22, 23, 24,
         // 25, 26, 27, 28, 29, 210, 211, 212
         let components: usize = 2;
         let width: usize = 4;
@@ -885,7 +1013,7 @@ mod tests {
             y_position: (image_index / components) / width,
             width: &width,
             numb_of_components: &components,
-            point_tranform: &a_h, 
+            point_tranform: &a_h,
             p_: &p_,
             img: &img,
         };
@@ -898,9 +1026,12 @@ mod tests {
     #[test]
     fn contextcontext_ix_good() {
         // let context = get_ContextContext();
-        let img = Vec::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211, 212]);
-        // 1, 2, 3, 4, 5, 6, 7, 8, 
-        // 9, 10, 11, 12, 21, 22, 23, 24, 
+        let img = Vec::from([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 210, 211,
+            212,
+        ]);
+        // 1, 2, 3, 4, 5, 6, 7, 8,
+        // 9, 10, 11, 12, 21, 22, 23, 24,
         // 25, 26, 27, 28, 29, 210, 211, 212
         let components: usize = 2;
         let width: usize = 4;
@@ -914,7 +1045,7 @@ mod tests {
             y_position: (image_index / components) / width,
             width: &width,
             numb_of_components: &components,
-            point_tranform: &a_h, 
+            point_tranform: &a_h,
             p_: &p_,
             img: &img,
         };
@@ -981,52 +1112,166 @@ mod tests {
 
         let expected = [
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                Some(0), Some(1), Some(2), None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(0),
+                Some(1),
+                Some(2),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                Some(3), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(3),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                Some(4), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(4),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                Some(5), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(5),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                Some(6), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(6),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                Some(7), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(7),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                Some(8), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(8),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
         ];
 
@@ -1039,52 +1284,166 @@ mod tests {
     fn make_ssss_tables_good() {
         let code_lengths = [
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                Some(0), Some(1), Some(2), None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(0),
+                Some(1),
+                Some(2),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                Some(3), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(3),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                Some(4), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(4),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                Some(5), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(5),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                Some(6), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(6),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                Some(7), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(7),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                Some(8), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some(8),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
         ];
 
@@ -1111,64 +1470,86 @@ mod tests {
     fn make_ssss_tables_good2() {
         let code_lengths = [
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                Some(0), Some(1), Some(2), Some(3), Some(4), Some(5), Some(6), None, None, None, None, None, None, None, None, None,
+                Some(0),
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(4),
+                Some(5),
+                Some(6),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
             [
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
             ],
         ];
 
-        let expected = HashMap::from([
-            (8, 0),
-            (9, 1),
-            (10, 2),
-            (11, 3),
-            (12, 4),
-            (13, 5),
-            (14, 6),
-        ]);
+        let expected = HashMap::from([(8, 0), (9, 1), (10, 2), (11, 3), (12, 4), (13, 5), (14, 6)]);
 
         let (tables, min_code_length, max_code_length) = make_ssss_table(code_lengths);
 
@@ -1273,7 +1654,7 @@ mod tests {
     // }
 
     #[test]
-    fn bytes_to_int_two_good() {
+    fn bytes_to_int_two_consumed_good() {
         let buffer = Vec::from([0xC2_u8, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
         let mut buffer = buffer.iter();
         let expected: u16 = 0xC21D_u16;
@@ -1282,114 +1663,129 @@ mod tests {
     }
 
     #[test]
-    fn bytes_to_int_two_fail() {
+    fn bytes_to_int_two_consumed_fail() {
         let buffer = Vec::from([0xC2_u8, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
         let mut buffer = buffer.iter();
         let expected = 7564_u16;
         assert_ne!(bytes_to_int_two_consumed(&mut buffer), expected);
         assert_eq!(buffer.next().unwrap(), &0x8D);
     }
+
+    #[test]
+    fn bytes_to_int_two_peeked_good() {
+        let buffer = Vec::from([0xC2_u8, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
+        let mut buffer = buffer.iter();
+        let expected: u16 = 0xC21D_u16;
+        assert_eq!(bytes_to_int_two_peeked(&mut buffer), expected);
+        assert_eq!(buffer.next().unwrap(), &0x1D);
+    }
+
+    #[test]
+    fn bytes_to_int_two_peeked_fail() {
+        let buffer = Vec::from([0xC2_u8, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
+        let mut buffer = buffer.iter();
+        let expected = 7564_u16;
+        assert_ne!(bytes_to_int_two_peeked(&mut buffer), expected);
+        assert_eq!(buffer.next().unwrap(), &0x1D);
+    }
 }
 
-
-
 // // let mut all_code_lengths: Vec<[[u8; 16]; 16]> = Vec::new();
-// // all_code_lengths.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// // all_code_lengths.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
 // //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
-// // all_code_lengths.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [9, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// // all_code_lengths.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [9, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
 // //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
-// // all_code_lengths.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// // all_code_lengths.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
 // //                        [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
-
 
 // // let mut expected: Vec<[[u8; 16]; 16]> = Vec::new();
-// // expected.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// // expected.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
 // //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
-// // expected.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [9, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// // expected.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [9, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
 // //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
-// // expected.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
-// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255], 
+// // expected.push([[255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [5, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [7, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+// //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
 // //                [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255]]);
