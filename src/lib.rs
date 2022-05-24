@@ -3,6 +3,7 @@
 
 mod decoder;
 mod encoder;
+mod jpeg_errors;
 mod jpeg_utils;
 
 pub fn decode_image(encoded_image: Vec<u8>) {

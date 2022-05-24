@@ -1,25 +1,9 @@
 #![allow(dead_code)]
-use std::backtrace::Backtrace;
 use std::collections::{BTreeMap, HashMap};
 use std::slice::Iter;
 
 use crate::jpeg_utils::Marker;
-
-#[derive(thiserror::Error, Debug)]
-#[error("There was a Jpeg decoder error.")]
-pub struct JpegDecoderError {
-    #[from]
-    source: BadMagicNumberError,
-    backtrace: Backtrace,
-}
-
-#[derive(thiserror::Error, Debug)]
-#[error("The data doesn't have the expected Jpeg magic number.")]
-pub struct BadMagicNumberError;
-
-#[derive(thiserror::Error, Debug)]
-#[error("Necessery informaiton seems to be missing from the Jpeg.")]
-pub struct MissingInfoError;
+use crate::jpeg_errors::*;
 
 struct ContextContext<'a> {
     component: &'a usize,
@@ -106,9 +90,9 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
 
     use crate::jpeg_utils::Marker::*;
     while encoded_image.len() > 0 {
-        match bytes_to_int_two_peeked(&mut encoded_image) {
+        match bytes_to_int_two_peeked(&mut encoded_image)? {
             marker if marker == SOF3 as u16 => {
-                frame_header = parse_frame_header(&mut encoded_image);
+                frame_header = parse_frame_header(&mut encoded_image)?;
             }
             marker if marker == DHT as u16 => {
                 let huffman_info = get_huffman_info(&mut encoded_image);
@@ -139,13 +123,12 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
     Ok(raw_image)
 }
 
-fn skip_app_marker(mut encoded_image: &mut Iter<u8>) {
-    let l_p = bytes_to_int_two_consumed(&mut encoded_image);
+fn skip_app_marker(mut encoded_image: &mut Iter<u8>) -> Result<(), OutOfBoundsError>{
+    (0..bytes_to_int_two_consumed(&mut encoded_image)? as usize)
+        .map(|_| encoded_image.next())
+        .collect::<Vec<_>>();
 
-    // TODO: this is ugly should should use skip or something
-    for _ in 0..l_p {
-        encoded_image.next();
-    }
+    Ok(())
 }
 
 fn get_huffman_info(encoded_image: &mut Iter<u8>) -> SSSSTable {
@@ -370,11 +353,11 @@ fn parse_scan_header(mut encoded_image: &mut Iter<u8>) -> ScanHeader {
     }
 }
 
-fn parse_frame_header(mut encoded_image: &mut Iter<u8>) -> FrameHeader {
-    let _l_f: u16 = bytes_to_int_two_consumed(&mut encoded_image);
+fn parse_frame_header(mut encoded_image: &mut Iter<u8>) -> Result<FrameHeader, OutOfBoundsError> {
+    let _l_f: u16 = bytes_to_int_two_consumed(&mut encoded_image)?;
     let p_: u8 = *encoded_image.next().unwrap();
-    let y_: u16 = bytes_to_int_two_consumed(&mut encoded_image);
-    let x_: u16 = bytes_to_int_two_consumed(&mut encoded_image);
+    let y_: u16 = bytes_to_int_two_consumed(&mut encoded_image)?;
+    let x_: u16 = bytes_to_int_two_consumed(&mut encoded_image)?;
     let n_f = *encoded_image.next().unwrap() as usize;
     let mut components: HashMap<u8, Component> = HashMap::new();
     for _ in 0..n_f as usize {
@@ -392,32 +375,35 @@ fn parse_frame_header(mut encoded_image: &mut Iter<u8>) -> FrameHeader {
         );
     }
 
-    FrameHeader {
+    Ok(FrameHeader {
         p_,
         y_,
         x_,
         components,
-    }
+    })
 }
 
-fn is_jpeg(mut encoded_image: &mut Iter<u8>) -> Result<(), BadMagicNumberError> {
-    if bytes_to_int_two_consumed(&mut encoded_image) == Marker::SOI as u16 {
-        Ok(())
+fn is_jpeg(mut encoded_image: &mut Iter<u8>) -> Result<bool, BadMagicNumberError> {
+    if bytes_to_int_two_consumed(&mut encoded_image)? == Marker::SOI as u16 {
+        Ok(true)
     } else {
-        Err(BadMagicNumberError)
+        Err(BadMagicNumberError {
+            source: OutOfBoundsError,
+            // backtrace: OutOfBoundsError
+        })
     }
 }
 
-fn bytes_to_int_two_consumed(bytes: &mut Iter<u8>) -> u16 {
-    (*bytes.next().unwrap() as u16) << 8 | *bytes.next().unwrap() as u16
+fn bytes_to_int_two_consumed(bytes: &mut Iter<u8>) -> Result<u16, OutOfBoundsError> {
+    Ok((*bytes.next().ok_or(OutOfBoundsError)? as u16) << 8 | *bytes.next().ok_or(OutOfBoundsError)? as u16)
 }
 
-fn bytes_to_int_two_peeked(bytes: &mut Iter<u8>) -> u16 {
+fn bytes_to_int_two_peeked(bytes: &mut Iter<u8>) -> Result<u16, OutOfBoundsError> {
     // let mut bytes = bytes.by_ref().peekable();
     // (*bytes.next().unwrap() as u16) << 8 | **bytes.peek().unwrap() as u16
     let mut bytes_clone = bytes.clone();
     bytes.next();
-    (*bytes_clone.next().unwrap() as u16) << 8 | *bytes_clone.next().unwrap() as u16
+    Ok((*bytes_clone.next().ok_or(OutOfBoundsError)? as u16) << 8 | *bytes_clone.next().ok_or(OutOfBoundsError)? as u16)
 }
 
 
@@ -655,7 +641,7 @@ mod tests {
             encoded_image.next();
         }
 
-        skip_app_marker(&mut encoded_image);
+        skip_app_marker(&mut encoded_image).unwrap();
         assert_eq!(encoded_image.len(), 42281);
     }
 
@@ -1580,7 +1566,7 @@ mod tests {
             encoded_image.next();
         }
 
-        let frame_header = parse_frame_header(&mut encoded_image);
+        let frame_header = parse_frame_header(&mut encoded_image).unwrap();
 
         assert_eq!(frame_header.p_, 0x08);
         assert_eq!(frame_header.y_, 0x00F0);
@@ -1658,7 +1644,7 @@ mod tests {
         let buffer = Vec::from([0xC2_u8, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
         let mut buffer = buffer.iter();
         let expected: u16 = 0xC21D_u16;
-        assert_eq!(bytes_to_int_two_consumed(&mut buffer), expected);
+        assert_eq!(bytes_to_int_two_consumed(&mut buffer).unwrap(), expected);
         assert_eq!(buffer.next().unwrap(), &0x8D);
     }
 
@@ -1667,7 +1653,7 @@ mod tests {
         let buffer = Vec::from([0xC2_u8, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
         let mut buffer = buffer.iter();
         let expected = 7564_u16;
-        assert_ne!(bytes_to_int_two_consumed(&mut buffer), expected);
+        assert_ne!(bytes_to_int_two_consumed(&mut buffer).unwrap(), expected);
         assert_eq!(buffer.next().unwrap(), &0x8D);
     }
 
@@ -1676,7 +1662,7 @@ mod tests {
         let buffer = Vec::from([0xC2_u8, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
         let mut buffer = buffer.iter();
         let expected: u16 = 0xC21D_u16;
-        assert_eq!(bytes_to_int_two_peeked(&mut buffer), expected);
+        assert_eq!(bytes_to_int_two_peeked(&mut buffer).unwrap(), expected);
         assert_eq!(buffer.next().unwrap(), &0x1D);
     }
 
@@ -1685,7 +1671,7 @@ mod tests {
         let buffer = Vec::from([0xC2_u8, 0x1D, 0x8D, 0xE4, 0x0C, 0x9A]);
         let mut buffer = buffer.iter();
         let expected = 7564_u16;
-        assert_ne!(bytes_to_int_two_peeked(&mut buffer), expected);
+        assert_ne!(bytes_to_int_two_peeked(&mut buffer).unwrap(), expected);
         assert_eq!(buffer.next().unwrap(), &0x1D);
     }
 }
