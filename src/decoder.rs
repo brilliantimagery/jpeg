@@ -95,11 +95,11 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
                 frame_header = parse_frame_header(&mut encoded_image)?;
             }
             marker if marker == DHT as u16 => {
-                let huffman_info = get_huffman_info(&mut encoded_image);
+                let huffman_info = get_huffman_info(&mut encoded_image)?;
                 ssss_tables.insert(huffman_info.t_h as usize, huffman_info);
             }
             marker if marker == SOS as u16 => {
-                let scan_header_info = parse_scan_header(&mut encoded_image);
+                let scan_header_info = parse_scan_header(&mut encoded_image)?;
                 raw_image = decode_image(
                     &mut encoded_image,
                     &frame_header,
@@ -108,7 +108,7 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
                 );
             }
             marker if APP as u16 <= marker && marker <= APPn as u16 => {
-                skip_app_marker(&mut encoded_image);
+                skip_app_marker(&mut encoded_image)?;
             }
             marker if marker == EOI as u16 => {
                 break;
@@ -123,38 +123,37 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
     Ok(raw_image)
 }
 
-fn skip_app_marker(mut encoded_image: &mut Iter<u8>) -> Result<(), OutOfBoundsError>{
-    (0..bytes_to_int_two_consumed(&mut encoded_image)? as usize)
-        .map(|_| encoded_image.next())
-        .collect::<Vec<_>>();
+fn skip_app_marker(encoded_image: &mut Iter<u8>) -> Result<(), OutOfBoundsError>{
+    (0..bytes_to_int_two_consumed(encoded_image)? as usize).for_each(|_| {
+        encoded_image.next();
+    });
 
     Ok(())
 }
 
-fn get_huffman_info(encoded_image: &mut Iter<u8>) -> SSSSTable {
-    let (t_c, t_h, code_lengths) = parse_huffman_info(encoded_image);
+fn get_huffman_info(encoded_image: &mut Iter<u8>) -> Result<SSSSTable, OutOfBoundsError> {
+    let (t_c, t_h, code_lengths) = parse_huffman_info(encoded_image)?;
 
     let (table, min_code_length, max_code_length) = make_ssss_table(code_lengths);
 
-    SSSSTable {
+    Ok(SSSSTable {
         t_c,
         t_h,
         table,
         min_code_length,
         max_code_length,
-    }
+    })
 }
 
-fn parse_huffman_info(encoded_image: &mut Iter<u8>) -> (u8, u8, [[Option<u8>; 16]; 16]) {
-    let _l_h = bytes_to_int_two_consumed(encoded_image);
-    let t_c_h = encoded_image.next().unwrap();
+fn parse_huffman_info(encoded_image: &mut Iter<u8>) -> Result<(u8, u8, [[Option<u8>; 16]; 16]), OutOfBoundsError> {
+    let _l_h = bytes_to_int_two_consumed(encoded_image)?;
+    let t_c_h = encoded_image.next().ok_or(OutOfBoundsError)?;
     let t_c = t_c_h >> 4;
     let t_h = t_c_h & 0xF;
-    // let mut code_lengths = [[0xFF_u8; 16]; 16];
     let mut code_lengths: [[Option<u8>; 16]; 16] = [[None; 16]; 16];
     let mut lengths: BTreeMap<u8, u8> = BTreeMap::new();
     for code_length_index in 0..16 {
-        let l_i = *encoded_image.next().unwrap();
+        let l_i = *encoded_image.next().ok_or(OutOfBoundsError)?;
         if l_i > 0 {
             lengths.insert(code_length_index, l_i);
         }
@@ -162,11 +161,11 @@ fn parse_huffman_info(encoded_image: &mut Iter<u8>) -> (u8, u8, [[Option<u8>; 16
     for (code_length_index, l_i) in lengths.iter() {
         for i in 0..*l_i {
             code_lengths[*code_length_index as usize][i as usize] =
-                Some(*encoded_image.next().unwrap());
+                Some(*encoded_image.next().ok_or(OutOfBoundsError)?);
         }
     }
 
-    (t_c, t_h, code_lengths)
+    Ok((t_c, t_h, code_lengths))
 }
 
 /// TODO: this algerythom presumably doesn't work for all possible tables
@@ -250,12 +249,8 @@ fn make_ssss_table(code_lengths: [[Option<u8>; 16]; 16]) -> (HashMap<u32, u8>, u
         // probably slower than the following but it's cleaner so... if row[0].is_some() {
         // filter out the values that have 0xFF since those are initial values
         // and don't have a valid code length
-        let values = row
-            .into_iter()
-            .filter(|x| x.is_some())
-            .map(|x| x.unwrap())
-            .collect::<Vec<u8>>();
-        if values.len() > 0 {
+        let values = row.iter().filter_map(|x| *x).collect::<Vec<u8>>();
+        if !values.is_empty() {
             // for each code lengh start with the 0th code of that length
             let mut values_w_n_bits: usize = 0;
             // once all codes of a length have been processed,
@@ -274,7 +269,7 @@ fn make_ssss_table(code_lengths: [[Option<u8>; 16]; 16]) -> (HashMap<u32, u8>, u
                     // Or until you hit the top (again, so you can move to the right branch)
                     loop {
                         let removed: u32 = code & 1;
-                        code = code >> 1;
+                        code >>= 1;
                         // if !(removed == 1 && number_of_used_bits(&code) > 1) {
                         if removed == 0 || number_of_used_bits(&code) <= 1 {
                             break;
@@ -316,19 +311,19 @@ fn number_of_used_bits(numb: &u32) -> usize {
     let mut n = *numb;
     let mut n_bits = 0;
     while n > 0 {
-        n = n >> 1;
+        n >>= 1;
         n_bits += 1;
     }
     n_bits
 }
 
-fn parse_scan_header(mut encoded_image: &mut Iter<u8>) -> ScanHeader {
-    let _l_s = bytes_to_int_two_consumed(&mut encoded_image);
-    let n_s = *encoded_image.next().unwrap() as usize;
+fn parse_scan_header(encoded_image: &mut Iter<u8>) -> Result<ScanHeader, OutOfBoundsError> {
+    let _l_s = bytes_to_int_two_consumed(encoded_image);
+    let n_s = *encoded_image.next().ok_or(OutOfBoundsError)? as usize;
     let mut head_params: HashMap<u8, HeaderParameter> = HashMap::new();
     for _ in 0..n_s {
-        let c_s = *encoded_image.next().unwrap();
-        let t_d_a = *encoded_image.next().unwrap();
+        let c_s = *encoded_image.next().ok_or(OutOfBoundsError)?;
+        let t_d_a = *encoded_image.next().ok_or(OutOfBoundsError)?;
         head_params.insert(
             c_s,
             HeaderParameter {
@@ -338,32 +333,32 @@ fn parse_scan_header(mut encoded_image: &mut Iter<u8>) -> ScanHeader {
             },
         );
     }
-    let s_s = *encoded_image.next().unwrap();
-    let s_e = *encoded_image.next().unwrap();
-    let a_h_l = *encoded_image.next().unwrap();
+    let s_s = *encoded_image.next().ok_or(OutOfBoundsError)?;
+    let s_e = *encoded_image.next().ok_or(OutOfBoundsError)?;
+    let a_h_l = *encoded_image.next().ok_or(OutOfBoundsError)?;
     let a_h = a_h_l >> 4;
     let a_l = a_h_l & 0xF;
 
-    ScanHeader {
+    Ok(ScanHeader {
         head_params,
         s_s,
         s_e,
         a_h,
         a_l,
-    }
+    })
 }
 
-fn parse_frame_header(mut encoded_image: &mut Iter<u8>) -> Result<FrameHeader, OutOfBoundsError> {
-    let _l_f: u16 = bytes_to_int_two_consumed(&mut encoded_image)?;
-    let p_: u8 = *encoded_image.next().unwrap();
-    let y_: u16 = bytes_to_int_two_consumed(&mut encoded_image)?;
-    let x_: u16 = bytes_to_int_two_consumed(&mut encoded_image)?;
-    let n_f = *encoded_image.next().unwrap() as usize;
+fn parse_frame_header(encoded_image: &mut Iter<u8>) -> Result<FrameHeader, OutOfBoundsError> {
+    let _l_f: u16 = bytes_to_int_two_consumed(encoded_image)?;
+    let p_: u8 = *encoded_image.next().ok_or(OutOfBoundsError)?;
+    let y_: u16 = bytes_to_int_two_consumed(encoded_image)?;
+    let x_: u16 = bytes_to_int_two_consumed(encoded_image)?;
+    let n_f = *encoded_image.next().ok_or(OutOfBoundsError)? as usize;
     let mut components: HashMap<u8, Component> = HashMap::new();
     for _ in 0..n_f as usize {
-        let c_: u8 = *encoded_image.next().unwrap();
-        let h_v: u8 = *encoded_image.next().unwrap();
-        let t_q: u8 = *encoded_image.next().unwrap();
+        let c_: u8 = *encoded_image.next().ok_or(OutOfBoundsError)?;
+        let h_v: u8 = *encoded_image.next().ok_or(OutOfBoundsError)?;
+        let t_q: u8 = *encoded_image.next().ok_or(OutOfBoundsError)?;
         components.insert(
             c_,
             Component {
@@ -383,8 +378,8 @@ fn parse_frame_header(mut encoded_image: &mut Iter<u8>) -> Result<FrameHeader, O
     })
 }
 
-fn is_jpeg(mut encoded_image: &mut Iter<u8>) -> Result<bool, BadMagicNumberError> {
-    if bytes_to_int_two_consumed(&mut encoded_image)? == Marker::SOI as u16 {
+fn is_jpeg(encoded_image: &mut Iter<u8>) -> Result<bool, BadMagicNumberError> {
+    if bytes_to_int_two_consumed(encoded_image)? == Marker::SOI as u16 {
         Ok(true)
     } else {
         Err(BadMagicNumberError {
@@ -423,7 +418,7 @@ fn decode_image(
     let mut write_index = 0_usize;
     // let image_start_index = read_index;
 
-    let image_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
+    let image_bits = get_image_data_without_stuffed_zero_bytes(encoded_image).unwrap();
     let mut bit_read_index: usize = 0;
 
     while bit_read_index < image_bits.len() {
@@ -434,7 +429,7 @@ fn decode_image(
             x_position: (write_index / numb_of_components) % width,
             y_position: (write_index / numb_of_components) / width,
             width: &width,
-            numb_of_components: &&numb_of_components,
+            numb_of_components: &numb_of_components,
             point_tranform: &scan_header.a_h,
             p_: &frame_header.p_,
             img: &raw_image,
@@ -476,22 +471,22 @@ fn get_prediction(context: ContextContext, mut predictor: u8) -> u32 {
     }
 }
 
-fn get_image_data_without_stuffed_zero_bytes(encoded_image: &mut Iter<u8>) -> Vec<u8> {
+fn get_image_data_without_stuffed_zero_bytes(encoded_image: &mut Iter<u8>) -> Result<Vec<u8>, OutOfBoundsError> {
     // See JPG document 10918-1 P33 B.1.1.5 Note 2
     let mut image_data: Vec<u8> = Vec::with_capacity(encoded_image.len());
-    let mut image = encoded_image.clone();
+    let mut image_clone = encoded_image.clone();
 
-    let mut this_byte = image.next();
-    let mut next_byte = image.next();
+    let mut this_byte = image_clone.next();
+    let mut next_byte = image_clone.next();
     let mut i = 0;
     while this_byte.is_some() {
-        let this_val = *this_byte.unwrap();
+        let this_val = *this_byte.ok_or(OutOfBoundsError)?;
         let next_val = *next_byte.unwrap_or(&0);
         if this_val < 0xFF {
             // if the current element is less then 0xFF the proceide as usual
             image_data.push(this_val);
             this_byte = next_byte;
-            next_byte = image.next();
+            next_byte = image_clone.next();
             encoded_image.next();
             i += 1;
         } else if next_val == 0 {
@@ -500,8 +495,8 @@ fn get_image_data_without_stuffed_zero_bytes(encoded_image: &mut Iter<u8>) -> Ve
             // this element should be read and the next is a "zero byte"
             // which was added to avoid confusion with markers and should be discarded
             image_data.push(this_val);
-            this_byte = image.next();
-            next_byte = image.next();
+            this_byte = image_clone.next();
+            next_byte = image_clone.next();
             encoded_image.next();
             encoded_image.next();
             i += 1;
@@ -512,17 +507,6 @@ fn get_image_data_without_stuffed_zero_bytes(encoded_image: &mut Iter<u8>) -> Ve
     }
 
     let mut bits: Vec<u8> = Vec::with_capacity(i * 8);
-
-    // for i in 0..i {
-    //     bits.push((image_data[i] >> 7) & 1);
-    //     bits.push((image_data[i] >> 6) & 1);
-    //     bits.push((image_data[i] >> 5) & 1);
-    //     bits.push((image_data[i] >> 4) & 1);
-    //     bits.push((image_data[i] >> 3) & 1);
-    //     bits.push((image_data[i] >> 2) & 1);
-    //     bits.push((image_data[i] >> 1) & 1);
-    //     bits.push((image_data[i] >> 0) & 1);
-    // }
 
     for i in image_data.iter().take(i) {
         bits.push((i >> 7) & 1);
@@ -535,7 +519,7 @@ fn get_image_data_without_stuffed_zero_bytes(encoded_image: &mut Iter<u8>) -> Ve
         bits.push((i >> 0) & 1);
     }
 
-    bits
+    Ok(bits)
 }
 
 fn get_huffmaned_value(
@@ -580,7 +564,7 @@ fn get_huffmaned_value(
                 }
                 // if the first read bit is 0 the number is negative and has to be calculated
                 if first_bit == 0 {
-                    -1 * ((1 << ssss) - (pixel_diff + 1)) as i32
+                    -(((1 << ssss) - (pixel_diff + 1)) as i32)
                     // (-(1 << ssss) + pixel_diff + 1, bit_read_index)
                 } else {
                     pixel_diff as i32
@@ -857,7 +841,7 @@ mod tests {
 
         let mut encoded_image = encoded_image.iter();
 
-        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
+        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image).unwrap();
 
         assert_eq!(actual_bits, expected_bits);
         assert_eq!(actual_bits.len(), 40);
@@ -875,7 +859,7 @@ mod tests {
 
         let mut encoded_image = encoded_image.iter();
 
-        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
+        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image).unwrap();
 
         assert_eq!(actual_bits, expected_bits);
         assert_eq!(actual_bits.len(), 32);
@@ -893,7 +877,7 @@ mod tests {
 
         let mut encoded_image = encoded_image.iter();
 
-        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
+        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image).unwrap();
 
         assert_eq!(actual_bits, expected_bits);
         assert_eq!(actual_bits.len(), 40);
@@ -910,7 +894,7 @@ mod tests {
 
         let mut encoded_image = encoded_image.iter();
 
-        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image);
+        let actual_bits = get_image_data_without_stuffed_zero_bytes(&mut encoded_image).unwrap();
 
         assert_eq!(actual_bits, expected_bits);
         assert_eq!(actual_bits.len(), 32);
@@ -1063,7 +1047,7 @@ mod tests {
             encoded_image.next();
         }
 
-        let scan_header = parse_scan_header(&mut encoded_image);
+        let scan_header = parse_scan_header(&mut encoded_image).unwrap();
 
         assert_eq!(scan_header.head_params.len(), 3);
         assert_eq!(scan_header.head_params.get(&0).unwrap().t_d, 0);
@@ -1094,7 +1078,7 @@ mod tests {
             encoded_image.next();
         }
 
-        let (t_c, t_h, code_lengths) = parse_huffman_info(&mut encoded_image);
+        let (t_c, t_h, code_lengths) = parse_huffman_info(&mut encoded_image).unwrap();
 
         let expected = [
             [
