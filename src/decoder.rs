@@ -2,8 +2,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::slice::Iter;
 
-use crate::jpeg_utils::Marker;
 use crate::jpeg_errors::*;
+use crate::jpeg_utils::Marker;
+
 
 struct ContextContext<'a> {
     component: &'a usize,
@@ -123,7 +124,7 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
     Ok(raw_image)
 }
 
-fn skip_app_marker(encoded_image: &mut Iter<u8>) -> Result<(), OutOfBoundsError>{
+fn skip_app_marker(encoded_image: &mut Iter<u8>) -> Result<(), OutOfBoundsError> {
     (0..bytes_to_int_two_consumed(encoded_image)? as usize).for_each(|_| {
         encoded_image.next();
     });
@@ -145,7 +146,9 @@ fn get_huffman_info(encoded_image: &mut Iter<u8>) -> Result<SSSSTable, OutOfBoun
     })
 }
 
-fn parse_huffman_info(encoded_image: &mut Iter<u8>) -> Result<(u8, u8, [[Option<u8>; 16]; 16]), OutOfBoundsError> {
+fn parse_huffman_info(
+    encoded_image: &mut Iter<u8>,
+) -> Result<(u8, u8, [[Option<u8>; 16]; 16]), OutOfBoundsError> {
     let _l_h = bytes_to_int_two_consumed(encoded_image)?;
     let t_c_h = encoded_image.next().ok_or(OutOfBoundsError)?;
     let t_c = t_c_h >> 4;
@@ -278,10 +281,7 @@ fn make_ssss_table(code_lengths: [[Option<u8>; 16]; 16]) -> (HashMap<u32, u8>, u
                     // Move down and to the right one node along the tree
                     code = (code << 1) + 1;
                     // Extend the code until it's appropreately long
-                    // if number_of_used_bits(&code) < index + 2 {
-                    //     code = code << 1
-                    // }
-                    code = code << (index + 1) - (number_of_used_bits(&code) - 1);
+                    code = code << ((index + 1) - (number_of_used_bits(&code) - 1));
                 }
                 if values.len() > values_w_n_bits {
                     table.insert(code, values[values_w_n_bits]);
@@ -390,7 +390,8 @@ fn is_jpeg(encoded_image: &mut Iter<u8>) -> Result<bool, BadMagicNumberError> {
 }
 
 fn bytes_to_int_two_consumed(bytes: &mut Iter<u8>) -> Result<u16, OutOfBoundsError> {
-    Ok((*bytes.next().ok_or(OutOfBoundsError)? as u16) << 8 | *bytes.next().ok_or(OutOfBoundsError)? as u16)
+    Ok((*bytes.next().ok_or(OutOfBoundsError)? as u16) << 8
+        | *bytes.next().ok_or(OutOfBoundsError)? as u16)
 }
 
 fn bytes_to_int_two_peeked(bytes: &mut Iter<u8>) -> Result<u16, OutOfBoundsError> {
@@ -398,9 +399,9 @@ fn bytes_to_int_two_peeked(bytes: &mut Iter<u8>) -> Result<u16, OutOfBoundsError
     // (*bytes.next().unwrap() as u16) << 8 | **bytes.peek().unwrap() as u16
     let mut bytes_clone = bytes.clone();
     bytes.next();
-    Ok((*bytes_clone.next().ok_or(OutOfBoundsError)? as u16) << 8 | *bytes_clone.next().ok_or(OutOfBoundsError)? as u16)
+    Ok((*bytes_clone.next().ok_or(OutOfBoundsError)? as u16) << 8
+        | *bytes_clone.next().ok_or(OutOfBoundsError)? as u16)
 }
-
 
 /// TODO: THIS SEEMS TO BE WEHRE I'VE LEFT OFF
 fn decode_image(
@@ -471,7 +472,9 @@ fn get_prediction(context: ContextContext, mut predictor: u8) -> u32 {
     }
 }
 
-fn get_image_data_without_stuffed_zero_bytes(encoded_image: &mut Iter<u8>) -> Result<Vec<u8>, OutOfBoundsError> {
+fn get_image_data_without_stuffed_zero_bytes(
+    encoded_image: &mut Iter<u8>,
+) -> Result<Vec<u8>, OutOfBoundsError> {
     // See JPG document 10918-1 P33 B.1.1.5 Note 2
     let mut image_data: Vec<u8> = Vec::with_capacity(encoded_image.len());
     let mut image_clone = encoded_image.clone();
@@ -524,7 +527,7 @@ fn get_image_data_without_stuffed_zero_bytes(encoded_image: &mut Iter<u8>) -> Re
 
 fn get_huffmaned_value(
     ssss_table: &SSSSTable,
-    image_bits: &Vec<u8>,
+    image_bits: &[u8],
     bit_read_index: &mut usize,
 ) -> i32 {
     let mut ssss: u8 = 0xFF;
@@ -580,40 +583,13 @@ fn get_huffmaned_value(
 mod tests {
     extern crate test;
 
-    use std::env;
-    use std::fs::File;
-    use std::io::Read;
-    use std::path::Path;
-    // use test::Bencher;
+    use crate::test_utils;
 
     use super::*;
 
-    fn get_file_as_byte_iter(path: &Path) -> Vec<u8> {
-        let mut file = File::open(path).expect("The test file wasn't where it was expected.");
-        let mut encoded_image = Vec::from([]);
-        file.read_to_end(&mut encoded_image);
-
-        encoded_image
-
-        // let mut e_i: Vec<u8> = Vec::with_capacity(encoded_image.len());
-        // for i in 0..encoded_image.len() {
-        //     e_i[i] = encoded_image[i];
-        // }
-
-        // e_i.iter()
-    }
-
     #[test]
     fn skip_app_marker_good() {
-        let mut path = env::current_dir().unwrap();
-        path.push("tests");
-        path.push("common");
-        path.push("F-18.ljpg");
-        let path = path.as_path();
-        let encoded_image = get_file_as_byte_iter(path);
-        // let mut file = File::open(path).expect("The test file wasn't where it was expected.");
-        // let mut encoded_image = Vec::from([]);
-        // file.read_to_end(&mut encoded_image);
+        let encoded_image = test_utils::get_file_as_byte_iter("F-18.ljpg");
 
         let mut e_i: Vec<u8> = Vec::with_capacity(encoded_image.len());
         for i in 0..encoded_image.len() {
@@ -1027,15 +1003,7 @@ mod tests {
 
     #[test]
     fn parse_scan_header_good() {
-        let mut path = env::current_dir().unwrap();
-        path.push("tests");
-        path.push("common");
-        path.push("F-18.ljpg");
-        let path = path.as_path();
-        let encoded_image = get_file_as_byte_iter(path);
-        // let mut file = File::open(path).expect("The test file wasn't where it was expected.");
-        // let mut encoded_image = Vec::from([]);
-        // file.read_to_end(&mut encoded_image);
+        let encoded_image = test_utils::get_file_as_byte_iter("F-18.ljpg");
 
         let mut e_i: Vec<u8> = Vec::with_capacity(encoded_image.len());
         for i in 0..encoded_image.len() {
@@ -1066,12 +1034,7 @@ mod tests {
 
     #[test]
     fn parse_huffman_info_good() {
-        let mut path = env::current_dir().unwrap();
-        path.push("tests");
-        path.push("common");
-        path.push("F-18.ljpg");
-        let path = path.as_path();
-        let encoded_image = get_file_as_byte_iter(path);
+        let encoded_image = test_utils::get_file_as_byte_iter("F-18.ljpg");
         let mut encoded_image = encoded_image.iter();
 
         for _ in 0..0x17 {
@@ -1530,15 +1493,7 @@ mod tests {
 
     #[test]
     fn parse_frame_header_good() {
-        let mut path = env::current_dir().unwrap();
-        path.push("tests");
-        path.push("common");
-        path.push("F-18.ljpg");
-        let path = path.as_path();
-        let encoded_image = get_file_as_byte_iter(path);
-        // let mut file = File::open(path).expect("The test file wasn't where it was expected.");
-        // let mut encoded_image = Vec::from([]);
-        // file.read_to_end(&mut encoded_image);
+        let encoded_image = test_utils::get_file_as_byte_iter("F-18.ljpg");
 
         let mut e_i: Vec<u8> = Vec::with_capacity(encoded_image.len());
         for i in 0..encoded_image.len() {

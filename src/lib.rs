@@ -1,6 +1,9 @@
 #![feature(backtrace)]
 #![feature(test)]
 
+#[cfg(test)]
+mod test_utils;
+
 mod decoder;
 mod encoder;
 mod jpeg_errors;

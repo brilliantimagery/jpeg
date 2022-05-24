@@ -14,7 +14,6 @@ use std::backtrace::Backtrace;
 pub enum JpegDecoderError {
     BoundsError(OutOfBoundsError),
     MagicError(BadMagicNumberError),
-
     // backtrace: Backtrace,
 }
 
