@@ -16,6 +16,7 @@ pub enum JpegDecoderError {
     MagicError(BadMagicNumberError),
     HuffmanError(HuffmanDecodingError),
     DecodeError(DecodeError),
+    BitDepthError(UnsupportedBitDepthError),
     // backtrace: Backtrace,
 }
 
@@ -40,6 +41,12 @@ impl From<HuffmanDecodingError> for JpegDecoderError {
 impl From<DecodeError> for JpegDecoderError {
     fn from(err: DecodeError) -> Self {
         Self::DecodeError(err)
+    }
+}
+
+impl From<UnsupportedBitDepthError> for JpegDecoderError {
+    fn from(err: UnsupportedBitDepthError) -> Self {
+        Self::BitDepthError(err)
     }
 }
 
@@ -91,3 +98,7 @@ impl From<OutOfBoundsError> for DecodeError {
         Self::BoundsError(err)
     }
 }
+
+#[derive(thiserror::Error, Debug)]
+#[error("The precision of the colors is of an unsupported size.")]
+pub struct UnsupportedBitDepthError;

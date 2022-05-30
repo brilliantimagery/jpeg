@@ -3,46 +3,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::slice::Iter;
 
 use crate::jpeg_errors::*;
-use crate::jpeg_utils::Marker;
-
-
-struct ContextContext<'a> {
-    component: &'a usize,
-    x_position: usize,
-    y_position: usize,
-    width: &'a usize,
-    numb_of_components: &'a usize,
-    point_tranform: &'a u8,
-    p_: &'a u8, // Sample precision
-    img: &'a Vec<u32>,
-}
-
-impl ContextContext<'_> {
-    fn r_a(&self) -> i32 {
-        self.img[(self.x_position - 1) * self.numb_of_components
-            + self.y_position * self.width * self.numb_of_components
-            + self.component] as i32
-    }
-    fn r_b(&self) -> i32 {
-        self.img[self.x_position * self.numb_of_components
-            + (self.y_position - 1) * self.width * self.numb_of_components
-            + self.component] as i32
-    }
-    fn r_c(&self) -> i32 {
-        self.img[(self.x_position - 1) * self.numb_of_components
-            + (self.y_position - 1) * self.width * self.numb_of_components
-            + self.component] as i32
-    }
-    fn r_ix(&self) -> i32 {
-        1 << (self.p_ - self.point_tranform - 1) as i32
-    }
-}
+use crate::jpeg_utils;
+use crate::jpeg_utils::{ContextContext, Marker};
 
 /// Quantization Table, 10918-1, B.2.4.1, P. 39
 struct QuantiziationTable {
-    p_q: u8,       // Element precision,
+    p_q: u8,        // Element precision,
     t_q: u8,        // Destinaiton identifier
-    q_k: [u16; 64], // Table element 
+    q_k: [u16; 64], // Table element
 }
 
 struct Component {
@@ -54,6 +22,7 @@ struct Component {
 
 struct FrameHeader {
     // Frame Header, 10918-1, B.2.2, P. 35
+    marker: u16,
     p_: u8,  // Sample precision
     y_: u16, // Number of lines
     x_: u16, // Number of samples per line
@@ -83,11 +52,12 @@ struct SSSSTable {
     max_code_length: usize, // number of bits of longest Huffman code
 }
 
-pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
+pub(crate) fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
     let mut encoded_image = encoded_image.iter();
     is_jpeg(&mut encoded_image)?;
 
     let mut frame_header = FrameHeader {
+        marker: 0,
         p_: 0,
         x_: 0,
         y_: 0,
@@ -100,9 +70,9 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
     use crate::jpeg_utils::Marker::*;
     while encoded_image.len() > 0 {
         match bytes_to_int_two_peeked(&mut encoded_image)? {
-            marker if marker == SOF3 as u16 => {
+            marker if marker == SOF0 as u16 || marker == SOF3 as u16 => {
                 encoded_image.next();
-                frame_header = parse_frame_header(&mut encoded_image)?;
+                frame_header = parse_frame_header(&mut encoded_image, marker)?;
             }
             marker if marker == DQT as u16 => {
                 encoded_image.next();
@@ -141,7 +111,9 @@ pub fn decode(encoded_image: Vec<u8>) -> Result<Vec<u32>, JpegDecoderError> {
     Ok(raw_image)
 }
 
-fn parse_quantizaiton_table(encoded_image: &mut Iter<u8>) -> Result<QuantiziationTable, OutOfBoundsError> {
+fn parse_quantizaiton_table(
+    encoded_image: &mut Iter<u8>,
+) -> Result<QuantiziationTable, OutOfBoundsError> {
     let _l_q = bytes_to_int_two_consumed(encoded_image)?;
     let p_t_q = *encoded_image.next().ok_or(OutOfBoundsError)?;
     let p_q = p_t_q >> 4;
@@ -158,11 +130,7 @@ fn parse_quantizaiton_table(encoded_image: &mut Iter<u8>) -> Result<Quantiziatio
         }
     }
 
-    Ok(QuantiziationTable {
-        p_q,
-        t_q,
-        q_k,
-    })
+    Ok(QuantiziationTable { p_q, t_q, q_k })
 }
 
 fn skip_app_marker(encoded_image: &mut Iter<u8>) -> Result<(), OutOfBoundsError> {
@@ -304,7 +272,7 @@ fn make_ssss_table(code_lengths: [[Option<u8>; 16]; 16]) -> (HashMap<u32, u8>, u
                 // index + 1 is the desired code length since index is base 0 so one less then the code length
                 // number_of_used_bits(&code) - 1 is the present code length since the leading/padded one takes up a bit
                 // the desired code length - the present code length is the amount it must grow to achieve the desired length
-                code = code << (index + 1 - (number_of_used_bits(&code) - 1));
+                code = code << (index + 1 - (jpeg_utils::number_of_used_bits(&code) - 1));
                 // While the first code of a langth "automatically" works,
                 // additionl codes of a length must have bits flipped
                 if values_w_n_bits > 0 {
@@ -315,14 +283,14 @@ fn make_ssss_table(code_lengths: [[Option<u8>; 16]; 16]) -> (HashMap<u32, u8>, u
                         let removed: u32 = code & 1;
                         code >>= 1;
                         // if !(removed == 1 && number_of_used_bits(&code) > 1) {
-                        if removed == 0 || number_of_used_bits(&code) <= 1 {
+                        if removed == 0 || jpeg_utils::number_of_used_bits(&code) <= 1 {
                             break;
                         }
                     }
                     // Move down and to the right one node along the tree
                     code = (code << 1) + 1;
                     // Extend the code until it's appropreately long
-                    code = code << ((index + 1) - (number_of_used_bits(&code) - 1));
+                    code = code << ((index + 1) - (jpeg_utils::number_of_used_bits(&code) - 1));
                 }
                 if values.len() > values_w_n_bits {
                     table.insert(code, values[values_w_n_bits]);
@@ -336,7 +304,7 @@ fn make_ssss_table(code_lengths: [[Option<u8>; 16]; 16]) -> (HashMap<u32, u8>, u
     let mut max_code_length: usize = 0;
 
     for v in table.keys() {
-        let length = number_of_used_bits(v) - 1;
+        let length = jpeg_utils::number_of_used_bits(v) - 1;
         if length < min_code_length {
             min_code_length = length;
         }
@@ -346,16 +314,6 @@ fn make_ssss_table(code_lengths: [[Option<u8>; 16]; 16]) -> (HashMap<u32, u8>, u
     }
 
     (table, min_code_length, max_code_length)
-}
-
-fn number_of_used_bits(numb: &u32) -> usize {
-    let mut n = *numb;
-    let mut n_bits = 0;
-    while n > 0 {
-        n >>= 1;
-        n_bits += 1;
-    }
-    n_bits
 }
 
 fn parse_scan_header(encoded_image: &mut Iter<u8>) -> Result<ScanHeader, OutOfBoundsError> {
@@ -389,7 +347,10 @@ fn parse_scan_header(encoded_image: &mut Iter<u8>) -> Result<ScanHeader, OutOfBo
     })
 }
 
-fn parse_frame_header(encoded_image: &mut Iter<u8>) -> Result<FrameHeader, OutOfBoundsError> {
+fn parse_frame_header(
+    encoded_image: &mut Iter<u8>,
+    marker: u16,
+) -> Result<FrameHeader, OutOfBoundsError> {
     let _l_f: u16 = bytes_to_int_two_consumed(encoded_image)?;
     let p_: u8 = *encoded_image.next().ok_or(OutOfBoundsError)?;
     let y_: u16 = bytes_to_int_two_consumed(encoded_image)?;
@@ -412,6 +373,7 @@ fn parse_frame_header(encoded_image: &mut Iter<u8>) -> Result<FrameHeader, OutOf
     }
 
     Ok(FrameHeader {
+        marker,
         p_,
         y_,
         x_,
@@ -454,58 +416,29 @@ fn decode_image(
     let width = frame_header.x_ as usize;
     let height = frame_header.y_ as usize;
 
-    let numb_of_components = frame_header.components.len();
-    let mut raw_image: Vec<u32> = Vec::with_capacity(width * height * numb_of_components);
+    let component_count = frame_header.components.len();
+    let mut raw_image: Vec<u32> = Vec::with_capacity(width * height * component_count);
 
     let image_bits = get_image_data_without_stuffed_zero_bytes(encoded_image)?;
     let mut image_bits = image_bits.iter();
 
-    while width * height * numb_of_components < raw_image.len() {
-        let component = raw_image.len() % numb_of_components;
-        let context = ContextContext {
-            component: &component,
-            x_position: (raw_image.len() / numb_of_components) % width,
-            y_position: (raw_image.len() / numb_of_components) / width,
-            width: &width,
-            numb_of_components: &numb_of_components,
-            point_tranform: &scan_header.a_h,
-            p_: &frame_header.p_,
-            img: &raw_image,
-        };
-        let p_x = get_prediction(context, scan_header.s_s);
-        let pixel_delta = get_huffmaned_value(
-            ssss_tables.get(&component).unwrap(),
-            &mut image_bits,
-        )?;
+    while width * height * component_count > raw_image.len() {
+        let component = raw_image.len() % component_count;
+        let p_x = jpeg_utils::make_prediciton(
+            &raw_image,
+            raw_image.len(),
+            component_count,
+            width,
+            frame_header.p_,
+            scan_header.a_h,
+            scan_header.s_s,
+        );
+        let pixel_delta =
+            get_huffmaned_value(ssss_tables.get(&component).unwrap(), &mut image_bits)?;
         raw_image.push(((p_x as i32 + pixel_delta) & ((1 << frame_header.p_) - 1)) as u32);
     }
 
     Ok(raw_image)
-}
-
-fn get_prediction(context: ContextContext, mut predictor: u8) -> u32 {
-    if context.x_position == 0 {
-        if context.y_position == 0 {
-            predictor = 8;
-        } else {
-            predictor = 2;
-        }
-    } else if context.y_position == 0 {
-        predictor = 1;
-    }
-
-    match predictor {
-        0 => 0,
-        1 => context.r_a() as u32,
-        2 => context.r_b() as u32,
-        3 => context.r_c() as u32,
-        4 => (context.r_a() + context.r_b() - context.r_c()) as u32,
-        5 => (context.r_a() + ((context.r_b() - context.r_c()) >> 1)) as u32,
-        6 => (context.r_b() + ((context.r_a() - context.r_c()) >> 1)) as u32,
-        7 => ((context.r_a() + context.r_b()) / 2) as u32,
-        8 => context.r_ix() as u32,
-        _ => 0,
-    }
 }
 
 fn get_image_data_without_stuffed_zero_bytes(
@@ -555,7 +488,7 @@ fn get_image_data_without_stuffed_zero_bytes(
         bits.push((i >> 3) & 1);
         bits.push((i >> 2) & 1);
         bits.push((i >> 1) & 1);
-        bits.push((i >> 0) & 1);
+        bits.push(i & 1);
     }
 
     Ok(bits)
@@ -597,7 +530,8 @@ fn get_huffmaned_value(
                 pixel_diff = (pixel_diff << 1) | (first_bit as u16);
                 // step thru the remainder of the ssss number of bits to get the coded number
                 for _ in 0..ssss - 1 {
-                    pixel_diff = (pixel_diff << 1) | (*image_bits.next().ok_or(OutOfBoundsError)? as u16);
+                    pixel_diff =
+                        (pixel_diff << 1) | (*image_bits.next().ok_or(OutOfBoundsError)? as u16);
                 }
                 // if the first read bit is 0 the number is negative and has to be calculated
                 if first_bit == 0 {
@@ -620,7 +554,6 @@ mod tests {
 
     use super::*;
 
-
     #[test]
     fn parse_quantizaiton_table_good_8_bit() {
         let encoded_image = test_utils::get_file_as_byte_iter("raw_quantization_table_8_bit.bin");
@@ -630,17 +563,17 @@ mod tests {
 
         let expected_p_q = 0;
         let expected_t_q = 3;
-        let expected_q_k= &test_utils::get_file_as_byte_iter("raw_quantization_table_8_bit_q_k.bin")
-            .iter()
-            .map(|x| *x as u16)
-            .collect::<Vec<_>>()
-            [..];
+        let expected_q_k =
+            &test_utils::get_file_as_byte_iter("raw_quantization_table_8_bit_q_k.bin")
+                .iter()
+                .map(|x| *x as u16)
+                .collect::<Vec<_>>()[..];
 
         assert_eq!(actual_table.p_q, expected_p_q);
         assert_eq!(actual_table.t_q, expected_t_q);
         assert_eq!(actual_table.q_k[..], expected_q_k[..]);
     }
-    
+
     #[test]
     fn parse_quantizaiton_table_good_16_bit() {
         let encoded_image = test_utils::get_file_as_byte_iter("raw_quantization_table_16_bit.bin");
@@ -650,10 +583,11 @@ mod tests {
 
         let expected_p_q = 1;
         let expected_t_q = 5;
-        let expected_q_k= &test_utils::get_file_as_byte_iter("raw_quantization_table_16_bit_q_k.bin")
-            .chunks(2)
-            .map(|x| (x[0] as u16) << 8 | (x[1] as u16))
-            .collect::<Vec<_>>()[..];
+        let expected_q_k =
+            &test_utils::get_file_as_byte_iter("raw_quantization_table_16_bit_q_k.bin")
+                .chunks(2)
+                .map(|x| (x[0] as u16) << 8 | (x[1] as u16))
+                .collect::<Vec<_>>()[..];
 
         assert_eq!(actual_table.p_q, expected_p_q);
         assert_eq!(actual_table.t_q, expected_t_q);
@@ -847,7 +781,10 @@ mod tests {
         ]);
         let pixel_diff = get_huffmaned_value(&ssss_table, &mut image_bits.iter());
         println!("{:?}", pixel_diff);
-        assert_eq!(pixel_diff.unwrap_err().to_string(), HuffmanDecodingError::Default.to_string());
+        assert_eq!(
+            pixel_diff.unwrap_err().to_string(),
+            HuffmanDecodingError::Default.to_string()
+        );
     }
 
     #[test]
@@ -933,13 +870,13 @@ mod tests {
         let p_: u8 = 8;
 
         let context = ContextContext {
-            component: &(image_index % components),
+            component: image_index % components,
             x_position: (image_index / components) % width,
             y_position: (image_index / components) / width,
-            width: &width,
-            numb_of_components: &components,
-            point_tranform: &a_h,
-            p_: &p_,
+            width,
+            component_count: components,
+            p_t: a_h,
+            p_: p_,
             img: &img,
         };
 
@@ -961,13 +898,13 @@ mod tests {
         let p_: u8 = 8;
 
         let context = ContextContext {
-            component: &(image_index % components),
+            component: image_index % components,
             x_position: (image_index / components) % width,
             y_position: (image_index / components) / width,
-            width: &width,
-            numb_of_components: &components,
-            point_tranform: &a_h,
-            p_: &p_,
+            width,
+            component_count: components,
+            p_t: a_h,
+            p_: p_,
             img: &img,
         };
 
@@ -989,13 +926,13 @@ mod tests {
         let p_: u8 = 8;
 
         let context = ContextContext {
-            component: &(image_index % components),
+            component: image_index % components,
             x_position: (image_index / components) % width,
             y_position: (image_index / components) / width,
-            width: &width,
-            numb_of_components: &components,
-            point_tranform: &a_h,
-            p_: &p_,
+            width,
+            component_count: components,
+            p_t: a_h,
+            p_: p_,
             img: &img,
         };
 
@@ -1017,13 +954,13 @@ mod tests {
         let p_: u8 = 8;
 
         let context = ContextContext {
-            component: &(image_index % components),
+            component: image_index % components,
             x_position: (image_index / components) % width,
             y_position: (image_index / components) / width,
-            width: &width,
-            numb_of_components: &components,
-            point_tranform: &a_h,
-            p_: &p_,
+            width,
+            component_count: components,
+            p_t: a_h,
+            p_: p_,
             img: &img,
         };
 
@@ -1536,8 +1473,9 @@ mod tests {
             encoded_image.next();
         }
 
-        let frame_header = parse_frame_header(&mut encoded_image).unwrap();
+        let frame_header = parse_frame_header(&mut encoded_image, 0xFFC3).unwrap();
 
+        assert_eq!(frame_header.marker, 0xFFC3);
         assert_eq!(frame_header.p_, 0x08);
         assert_eq!(frame_header.y_, 0x00F0);
         assert_eq!(frame_header.x_, 0x0140);
@@ -1553,37 +1491,6 @@ mod tests {
         assert_eq!(frame_header.components.get(&2).unwrap().t_q, 0);
         assert_eq!(encoded_image.len(), 107739);
         assert_eq!(encoded_image.next().unwrap(), &0xFF);
-    }
-
-    #[test]
-    fn number_of_used_bits_32() {
-        let n = 0xFFFFFFFF / 2 + 1;
-        assert_eq!(number_of_used_bits(&n), 32);
-    }
-
-    #[test]
-    fn number_of_used_bits_4() {
-        let n = 0xF;
-        assert_eq!(number_of_used_bits(&n), 4);
-    }
-
-    #[test]
-    fn number_of_used_bits_2() {
-        let n = 3;
-        assert_eq!(number_of_used_bits(&n), 2);
-        assert_eq!(number_of_used_bits(&n), 2);
-    }
-
-    #[test]
-    fn number_of_used_bits_1() {
-        let n = 1;
-        assert_eq!(number_of_used_bits(&n), 1);
-    }
-
-    #[test]
-    fn number_of_used_bits_0() {
-        let n = 0;
-        assert_eq!(number_of_used_bits(&n), 0);
     }
 
     #[test]

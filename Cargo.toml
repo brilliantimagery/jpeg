@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 thiserror = "1.0.31"
+color = { git = "https://github.com/brilliantimagery/color" }
