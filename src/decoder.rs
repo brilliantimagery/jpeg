@@ -35,7 +35,7 @@ struct ScanHeader {
     s_s: u8, // Start of Spectral selection; predictor selector in lossless
     s_e: u8, // End of Spectral or prediction selection; 0, not used, in lossless
     a_h: u8, // Successive aproximamtion bit position high, 0, not used, in lossless
-    a_l: u8, // Successive approximation bit position low; point transform, Pt, for lossless mode
+    a_l_p_t: u8, // Successive approximation bit position low; point transform, Pt, for lossless mode
 }
 
 struct HeaderParameter {
@@ -336,14 +336,14 @@ fn parse_scan_header(encoded_image: &mut Iter<u8>) -> Result<ScanHeader, OutOfBo
     let s_e = *encoded_image.next().ok_or(OutOfBoundsError)?;
     let a_h_l = *encoded_image.next().ok_or(OutOfBoundsError)?;
     let a_h = a_h_l >> 4;
-    let a_l = a_h_l & 0xF;
+    let a_l_p_t = a_h_l & 0xF;
 
     Ok(ScanHeader {
         head_params,
         s_s,
         s_e,
         a_h,
-        a_l,
+        a_l_p_t,
     })
 }
 
@@ -995,7 +995,7 @@ mod tests {
         assert_eq!(scan_header.s_s, 0x05);
         assert_eq!(scan_header.s_e, 0x00);
         assert_eq!(scan_header.a_h, 0x00);
-        assert_eq!(scan_header.a_l, 0x00);
+        assert_eq!(scan_header.a_l_p_t, 0x00);
         assert_eq!(encoded_image.len(), 107634);
         assert_eq!(encoded_image.next().unwrap(), &0xFC);
     }

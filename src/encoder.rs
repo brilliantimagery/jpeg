@@ -18,7 +18,7 @@ pub enum Colorspace {
     YCbCr,
 }
 
-pub enum ChannelCount {
+pub enum ComponentCount {
     One = 1,
     Two = 2,
     Three = 3,
@@ -65,10 +65,10 @@ pub(crate) fn encode(
 
 fn encode_image(pixel_differences: &Vec<i32>, ssss_vs_code: &Vec<HashMap<u8, u32>>) -> Vec<u8> {
     let mut image_buffer: Vec<bool> = Vec::with_capacity(pixel_differences.len() * 8);
-    let channel_count = ssss_vs_code.len();
+    let component_count = ssss_vs_code.len();
     for (idx, diff) in pixel_differences.iter().enumerate() {
-        let channel = idx % channel_count;
-        let table = &ssss_vs_code[channel];
+        let component = idx % component_count;
+        let table = &ssss_vs_code[component];
         let ssss = difference_to_ssss(*diff);
         append_ssss_code(&mut image_buffer, *table.get(&ssss).unwrap());
         append_difference(&mut image_buffer, *diff, ssss);
@@ -306,7 +306,7 @@ fn make_frame_header(
     let mut frame_header = Vec::new();
 
     match target_format {
-        BaselineDCT => add_u16_to_vec(&mut frame_header, SOF0 as u16),
+        BaselineSequential => add_u16_to_vec(&mut frame_header, SOF0 as u16),
         Lossless => add_u16_to_vec(&mut frame_header, SOF3 as u16),
     }
     let l_f = 2 + 1 + 2 + 2 + 1 + 3 * (component_count as u16);
@@ -315,15 +315,15 @@ fn make_frame_header(
     add_u16_to_vec(&mut frame_header, height);
     add_u16_to_vec(&mut frame_header, width);
     frame_header.push(component_count);
-    for channel in 0..component_count {
-        frame_header.push(channel);
+    for component in 0..component_count {
+        frame_header.push(component);
         match target_format {
-            BaselineDCT => {
-                match channel {
+            BaselineSequential => {
+                match component {
                     0 => frame_header.push(0x11),
                     1 | _ => frame_header.push(0x22),
                 }
-                frame_header.push(channel);
+                frame_header.push(component);
             }
             Lossless => {
                 frame_header.push(0x11);
@@ -343,9 +343,17 @@ fn set_color(
     use Format::*;
     match target_format {
         Lossless => raw_image,
-        BaselineDCT => {
-            let raw_image = match source_precision {
+        BaselineSequential => {
+            let raw_image = match source_precision.clone() {
                 Eight => raw_image,
+                // precision => raw_image
+                //     .into_iter()
+                //     .map(|x| x * 255 / 2u32.pow(&precision as u32) as u32)
+                //     .collect::<Vec<_>>()
+                Twelve => raw_image
+                    .into_iter()
+                    .map(|x| x * 255 / 2u32.pow(12) as u32)
+                    .collect::<Vec<_>>(),
                 Sixteen => raw_image
                     .into_iter()
                     .map(|x| x * 255 / u16::MAX as u32)
@@ -539,9 +547,9 @@ mod tests {
         let width = 250;
         let height = 300;
         let target_format = &Format::Lossless;
-        let channel_count = 3;
+        let component_count = 3;
         let precision = 8;
-        let actual = make_frame_header(width, height, target_format, channel_count, precision);
+        let actual = make_frame_header(width, height, target_format, component_count, precision);
 
         let mut expected = Vec::new();
         expected.push(0xFF);
@@ -553,7 +561,7 @@ mod tests {
         expected.push((height & 0xFF) as u8);
         expected.push((width >> 8) as u8);
         expected.push((width & 0xFF) as u8);
-        expected.push(channel_count);
+        expected.push(component_count);
         expected.push(0);
         expected.push(0x11);
         expected.push(0);

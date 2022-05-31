@@ -12,12 +12,13 @@ const CROMINANCE_QUANTIZATION_TABLE: [u8; 64] = [
 ];
 
 pub enum Format {
-    BaselineDCT,
+    BaselineSequential,
     Lossless,
 }
 
 pub enum Precision {
     Eight = 8,
+    Twelve = 12,
     Sixteen = 16,
 }
 

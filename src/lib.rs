@@ -11,6 +11,14 @@ mod jpeg_errors;
 mod jpeg_utils;
 pub use jpeg_utils::{Format, Precision};
 
+pub struct Jpeg {
+    n_f: u8, // number of components
+    x_: u16, // image width
+    y_: u16, // image height
+    p_: u8, // sample precison, number of bits per "pixel"
+    a_l_p_t: u8, // Successive approximation bit position low for Progressive DCT, or point transform for Lossless
+}
+
 pub fn decode_image(encoded_image: Vec<u8>) -> Result<Vec<u32>, jpeg_errors::JpegDecoderError> {
     decoder::decode(encoded_image)
 }
